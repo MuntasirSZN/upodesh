@@ -1,134 +1,106 @@
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, HashSet},
     env::{args, var_os},
-    fs::{File, read, read_to_string},
+    fs::{self, read_to_string, File},
     io::BufWriter,
     path::PathBuf,
 };
 
 use fst::raw::Builder;
-use rexplode::explode;
-use serde::{Deserialize, Serialize};
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Block {
-    pub transliterate: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub entire_block_optional: Option<bool>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RegexBlock {
-    pub transliterate: String,
-    pub entire_block_optional: Option<bool>,
-}
+use fst::MapBuilder;
+use simd_normalizer::UnicodeNormalization;
 
 fn generate_words_fst() {
     let root = PathBuf::from(var_os("CARGO_MANIFEST_DIR").unwrap());
     let parent = root.parent().unwrap();
     let dest = parent.join("src").join("words.fst");
-
     let file = File::create(dest).expect("Failed to create words.fst");
     let writer = BufWriter::new(file);
-
     let mut fst = Builder::new(writer).unwrap();
-    let words = read_to_string(parent.join("data/source-words.txt"))
-        .expect("Failed to read source words file");
-
-    let mut words = words.lines().map(str::trim).collect::<Vec<_>>();
-
+    let words_dir = parent.join("data/openbangla-keyboard/data");
+    let words = read_to_string(words_dir.join("dictionary.json")).expect("Failed to read");
+    let mut words = words.lines().filter(|s| !s.is_empty()).collect::<Vec<_>>();
     words.sort();
-
     for word in words {
-        let numbered_word = word.chars().map(|c| c as u8).collect::<Vec<u8>>();
-        fst.add(&numbered_word).expect("Failed to add word to FST");
+        let numbered = word.chars().map(|c| c as u8).collect::<Vec<u8>>();
+        fst.add(&numbered).expect("add word");
     }
-
-    fst.finish().expect("Failed to finish words FST generation");
+    fst.finish().expect("finish");
 }
 
-fn generate_patterns_fst() {
+fn generate_typo_index() {
+    const MAX_EDIT_DISTANCE: usize = 1;
+    const PREFIX_LENGTH: usize = 7;
     let root = PathBuf::from(var_os("CARGO_MANIFEST_DIR").unwrap());
     let parent = root.parent().unwrap();
-    let dest = parent.join("src").join("avro").join("patterns.fst");
-
-    let file = File::create(dest).expect("Failed to create patterns.fst");
-    let writer = BufWriter::new(file);
-
-    let mut fst = Builder::new(writer).unwrap();
-    let patterns: HashMap<String, Block> = serde_json::from_slice(
-        &read(parent.join("data/preprocessed-patterns.json"))
-            .expect("Failed to read source patterns file"),
-    )
-    .unwrap();
-
-    let mut patterns = patterns.keys().map(|s| s.as_str()).collect::<Vec<_>>();
-
-    patterns.sort();
-
-    for pattern in patterns {
-        let numbered_word = pattern.chars().map(|c| c as u8).collect::<Vec<u8>>();
-        fst.add(&numbered_word)
-            .expect("Failed to add pattern to FST");
+    let dest = parent.join("src").join("typo");
+    fs::create_dir_all(&dest).expect("create typo dir");
+    let words_dir = parent.join("data/openbangla-keyboard/data");
+    let text = read_to_string(words_dir.join("dictionary.json")).expect("read");
+    let mut words: Vec<String> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    for line in text.lines() {
+        let w: String = line.trim().nfc().into_owned();
+        if !w.is_empty() && seen.insert(w.clone()) {
+            words.push(w);
+        }
     }
 
-    fst.finish()
-        .expect("Failed to finish patterns FST generation");
-}
-
-fn generate_regex_exploded_patterns(source: &str, dest: &str) {
-    let file = File::create(dest).expect("Failed to create destination file");
-
-    let regex_patterns: HashMap<String, RegexBlock> =
-        serde_json::from_slice(&read(source).expect("Failed to read source patterns file"))
-            .unwrap();
-
-    let mut patterns: BTreeMap<String, Block> = BTreeMap::new();
-
-    for (pattern, block) in regex_patterns {
-        // Unique and non-empty patterns only
-        let mut exploded: Vec<String> = explode(&block.transliterate)
-            .unwrap()
-            .into_iter()
-            .collect::<HashSet<_>>()
-            .into_iter()
-            .filter(|s| !s.is_empty())
-            .collect();
-
-        // sort the patterns for consistency
-        exploded.sort();
-
-        patterns.insert(
-            pattern,
-            Block {
-                transliterate: exploded,
-                entire_block_optional: block.entire_block_optional,
-            },
-        );
+    fn add_deletes(chars: &[char], level: usize, max: usize, out: &mut HashSet<Vec<char>>) {
+        if level == max {
+            return;
+        }
+        if chars.len() > 1 {
+            for i in 0..chars.len() {
+                let mut d = Vec::with_capacity(chars.len() - 1);
+                d.extend_from_slice(&chars[..i]);
+                d.extend_from_slice(&chars[i + 1..]);
+                if out.insert(d.clone()) {
+                    add_deletes(&d, level + 1, max, out);
+                }
+            }
+        }
     }
 
-    serde_json::to_writer_pretty(file, &patterns)
-        .expect("Failed to write exploded patterns to file");
+    let mut deletes: BTreeMap<Vec<u8>, Vec<u32>> = BTreeMap::new();
+    for (id, word) in words.iter().enumerate() {
+        let prefix: Vec<char> = word.chars().take(PREFIX_LENGTH).collect();
+        let mut dset: HashSet<Vec<char>> = HashSet::new();
+        dset.insert(prefix.clone());
+        add_deletes(&prefix, 0, MAX_EDIT_DISTANCE, &mut dset);
+        for d in dset {
+            let key: Vec<u8> = d.iter().map(|c| *c as u8).collect();
+            deletes.entry(key).or_default().push(id as u32);
+        }
+    }
+
+    let mut builder = MapBuilder::memory();
+    let mut packed: Vec<u8> = Vec::new();
+    let mut offset: u32 = 0;
+    for (key, ids) in &deletes {
+        for id in ids {
+            packed.extend_from_slice(&id.to_le_bytes());
+        }
+        let value = ((offset as u64) << 32) | (ids.len() as u64);
+        offset += ids.len() as u32;
+        builder.insert(key, value).expect("insert key");
+    }
+    let fst_bytes = builder.into_inner().expect("finish map");
+    fs::write(dest.join("deletes.fst"), &fst_bytes).expect("write deletes.fst");
+    fs::write(dest.join("word_ids.bin"), &packed).expect("write word_ids.bin");
+
+    let mut blob: Vec<u8> = Vec::new();
+    let mut offsets: Vec<u8> = Vec::new();
+    for w in &words {
+        offsets.extend_from_slice(&(blob.len() as u32).to_le_bytes());
+        blob.extend_from_slice(w.as_bytes());
+    }
+    offsets.extend_from_slice(&(blob.len() as u32).to_le_bytes());
+    fs::write(dest.join("words.bin"), &blob).expect("write words.bin");
+    fs::write(dest.join("word_offsets.bin"), &offsets).expect("write word_offsets.bin");
 }
 
 fn main() {
-    let args = args().collect::<Vec<String>>();
-
-    if let Some("explode") = args.get(1).map(|s| s.as_str()) {
-        let source = args
-            .get(2)
-            .map(|s| s.as_str())
-            .expect("Give source regex pattern json");
-        let dest = args
-            .get(3)
-            .map(|s| s.as_str())
-            .expect("Give destination path");
-
-        generate_regex_exploded_patterns(source, dest);
-    } else {
-        generate_words_fst();
-        generate_patterns_fst();
-    }
+    generate_words_fst();
+    generate_typo_index();
 }

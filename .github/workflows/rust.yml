@@ -21,6 +21,8 @@ jobs:
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          submodules: recursive
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.rust }}
@@ -28,14 +30,13 @@ jobs:
         run: cargo test --verbose
       - name: Run benchmark
         run: cargo bench
-      - name: Get memory usage
-        run: cargo run --example alloc
 
   msrv:
     name: MSRV Check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@1.75.0 # MSRV for linux distributions (>= Debian 12)
-      # We can't use `cargo test` here because criterion requires a newer version of Rust (>=1.81.0)
-      - run: cargo build --verbose
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@1.91.0 # MSRV for linux distributions (>= Debian 12)
+      - run: cargo test --verbose
