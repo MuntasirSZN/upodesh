@@ -226,7 +226,7 @@ pub(crate) fn convert_to_phonetic_variants(input: &str, mode: Mode) -> Vec<Strin
 #[cfg(test)]
 mod tests {
     use super::{
-        convert_to_phonetic, convert_to_phonetic_mode, convert_to_phonetic_variants, Mode,
+        Mode, convert_to_phonetic, convert_to_phonetic_mode, convert_to_phonetic_variants,
     };
 
     #[test]
@@ -376,7 +376,10 @@ mod tests {
         let csv = include_str!("../../data/khipro-m17n/khipro-testcases.tsv");
         let is_bangla = |s: &str| {
             s.chars().all(|c| {
-                ('\u{0980}'..='\u{09ff}').contains(&c) || c == '\u{200c}' || c == '\u{200d}' || c == ' '
+                ('\u{0980}'..='\u{09ff}').contains(&c)
+                    || c == '\u{200c}'
+                    || c == '\u{200d}'
+                    || c == ' '
             })
         };
         let mut exact = 0;

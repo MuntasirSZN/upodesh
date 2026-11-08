@@ -21,9 +21,10 @@ fn varied(c: &mut Criterion) {
     let corrector = corrector();
     // Representative words drawn from the shipped dictionary, picked by
     // grapheme count so short/medium/long tiers track real lengths.
-    let root: serde_json::Value =
-        serde_json::from_str(include_str!("../data/openbangla-keyboard/data/dictionary.json"))
-            .expect("embedded dictionary is valid JSON");
+    let root: serde_json::Value = serde_json::from_str(include_str!(
+        "../data/openbangla-keyboard/data/dictionary.json"
+    ))
+    .expect("embedded dictionary is valid JSON");
     let mut words: Vec<String> = root
         .as_object()
         .expect("dictionary root is an object")
@@ -47,7 +48,10 @@ fn varied(c: &mut Criterion) {
         ("long10exact", word_at_len(&words, 10)),
     ];
     for (label, input) in cases {
-        assert!(corrector.contains(&input), "{label} input {input} must be in dictionary");
+        assert!(
+            corrector.contains(&input),
+            "{label} input {input} must be in dictionary"
+        );
         c.bench_function(&format!("suggest {label}"), |b| {
             b.iter(|| corrector.suggest_with(black_box(&input), 10))
         });

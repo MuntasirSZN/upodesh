@@ -17,8 +17,8 @@ use std::sync::LazyLock;
 pub mod typo;
 
 pub use typo::{
-    BigramLanguageModel, BuildError, Correction, CorrectionConfig, Corrector, EditCosts,
-    InputMode, Morphology, Suggestion, SuggestionInput, SuffixRule, WordEntry,
+    BigramLanguageModel, BuildError, Correction, CorrectionConfig, Corrector, EditCosts, InputMode,
+    Morphology, SuffixRule, Suggestion, SuggestionInput, WordEntry,
 };
 
 /// Build-time generated grapheme table + FST blob, see `build.rs`.

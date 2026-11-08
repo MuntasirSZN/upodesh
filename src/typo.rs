@@ -1045,43 +1045,40 @@ impl Corrector {
         for c in &bangla_hits {
             scores.insert(
                 c.word.clone(),
-                (c.score, c.edit_cost, None, c.frequency, c.context_probability),
+                (
+                    c.score,
+                    c.edit_cost,
+                    None,
+                    c.frequency,
+                    c.context_probability,
+                ),
             );
         }
         if let Some(roman) = query.roman
-            && self.config.roman_weight > 0.0 {
-                let idx = match query.mode {
-                    InputMode::Avro => 0,
-                    InputMode::Khipro => 1,
-                    InputMode::Bangla => 0,
-                };
-                let costs = roman::RomanCosts {
-                    insertion: 100,
-                    deletion: 100,
-                    transposition: 65,
-                };
-                let hits = roman::roman_search(
-                    &self.roman[idx],
-                    roman,
-                    self.config.max_roman_cost,
-                    &costs,
-                );
-                for (word, rcost) in hits {
-                    let entry = scores.entry(word.clone()).or_insert_with(|| {
-                        // Word found only via Roman path: score it at retrieval.
-                        let frequency = Self::frequency_of(&word, &self.trie, &self.graphemes);
-                        (
-                            u16::MAX as f64 / 100.0,
-                            u16::MAX,
-                            None,
-                            frequency,
-                            None,
-                        )
-                    });
-                    entry.1 = entry.1.min(self.edit_cost_of(&word, query.bangla));
-                    entry.2 = Some(rcost);
-                }
+            && self.config.roman_weight > 0.0
+        {
+            let idx = match query.mode {
+                InputMode::Avro => 0,
+                InputMode::Khipro => 1,
+                InputMode::Bangla => 0,
+            };
+            let costs = roman::RomanCosts {
+                insertion: 100,
+                deletion: 100,
+                transposition: 65,
+            };
+            let hits =
+                roman::roman_search(&self.roman[idx], roman, self.config.max_roman_cost, &costs);
+            for (word, rcost) in hits {
+                let entry = scores.entry(word.clone()).or_insert_with(|| {
+                    // Word found only via Roman path: score it at retrieval.
+                    let frequency = Self::frequency_of(&word, &self.trie, &self.graphemes);
+                    (u16::MAX as f64 / 100.0, u16::MAX, None, frequency, None)
+                });
+                entry.1 = entry.1.min(self.edit_cost_of(&word, query.bangla));
+                entry.2 = Some(rcost);
             }
+        }
         let mut out: Vec<Suggestion> = scores
             .into_iter()
             .map(|(word, (bscore, ecost, rcost, freq, cprob))| {

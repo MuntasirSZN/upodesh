@@ -33,8 +33,14 @@ fn main() {
 
     println!("cargo:rerun-if-changed={}", dictionary.display());
     println!("cargo:rerun-if-changed={}", frequencies.display());
-    println!("cargo:rerun-if-changed={}", manifest.join("data/avro-patterns.json").display());
-    println!("cargo:rerun-if-changed={}", manifest.join("data/khipro-patterns.json").display());
+    println!(
+        "cargo:rerun-if-changed={}",
+        manifest.join("data/avro-patterns.json").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        manifest.join("data/khipro-patterns.json").display()
+    );
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=src/typo/roman_gen.rs");
 
@@ -105,8 +111,7 @@ fn main() {
 
     // ---- Roman tries for both modes -------------------------------
     let avro_bytes = fs::read(manifest.join("data/avro-patterns.json")).unwrap_or_default();
-    let khipro_bytes =
-        fs::read(manifest.join("data/khipro-patterns.json")).unwrap_or_default();
+    let khipro_bytes = fs::read(manifest.join("data/khipro-patterns.json")).unwrap_or_default();
     let avro_set = load_patterns(&avro_bytes);
     let khipro_set = load_patterns(&khipro_bytes);
 
@@ -163,7 +168,16 @@ fn main() {
         }
         let n = nodes.len();
         let (mut start, mut cnt, mut eid, mut ech, mut t_start, mut t_alloc, mut t_off, mut t_len);
-        (start, cnt, eid, ech, t_start, t_alloc, t_off, t_len) = (vec![0u32; n], vec![0u32; n], Vec::new(), Vec::new(), vec![0u32; n], vec![0u32; n], Vec::new(), Vec::new());
+        (start, cnt, eid, ech, t_start, t_alloc, t_off, t_len) = (
+            vec![0u32; n],
+            vec![0u32; n],
+            Vec::new(),
+            Vec::new(),
+            vec![0u32; n],
+            vec![0u32; n],
+            Vec::new(),
+            Vec::new(),
+        );
         let total: usize = nodes.iter().map(|(c, _)| c.len()).sum();
         eid.reserve(total);
         ech.reserve(total);

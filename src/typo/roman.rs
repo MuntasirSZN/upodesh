@@ -49,14 +49,18 @@ impl RomanTrie {
         bytes: &[u8],
         cursor: &mut usize,
     ) -> Result<(Self, Vec<u8>), super::BuildError> {
-        let read_u32 = |cursor: &mut usize, reason: &'static str| -> Result<u32, super::BuildError> {
-            let chunk = bytes
-                .get(*cursor..*cursor + 4)
-                .ok_or(super::BuildError::InvalidIndex(reason))?;
-            *cursor += 4;
-            Ok(u32::from_le_bytes(chunk.try_into().expect("4 bytes")))
-        };
-        let read_vec_u32 = |count: usize, cursor: &mut usize, reason: &'static str| -> Result<Vec<u32>, super::BuildError> {
+        let read_u32 =
+            |cursor: &mut usize, reason: &'static str| -> Result<u32, super::BuildError> {
+                let chunk = bytes
+                    .get(*cursor..*cursor + 4)
+                    .ok_or(super::BuildError::InvalidIndex(reason))?;
+                *cursor += 4;
+                Ok(u32::from_le_bytes(chunk.try_into().expect("4 bytes")))
+            };
+        let read_vec_u32 = |count: usize,
+                            cursor: &mut usize,
+                            reason: &'static str|
+         -> Result<Vec<u32>, super::BuildError> {
             let mut out = Vec::with_capacity(count);
             for _ in 0..count {
                 out.push(read_u32(cursor, reason)?);
@@ -186,17 +190,15 @@ fn sub_cost(q: u16, cand: u8, query: &[u8]) -> u16 {
 }
 
 fn neighbor_cost(a: u8, b: u8) -> u16 {
-    const GROUPS: &[&[u8]] = &[
-        b"qwerty",
-        b"asdfgh",
-        b"zxcvbn",
-        b"1234567890",
-    ];
+    const GROUPS: &[&[u8]] = &[b"qwerty", b"asdfgh", b"zxcvbn", b"1234567890"];
     for group in GROUPS {
-        if let (Some(pa), Some(pb)) = (group.iter().position(|c| *c == a), group.iter().position(|c| *c == b))
-            && pa.abs_diff(pb) == 1 {
-                return 60;
-            }
+        if let (Some(pa), Some(pb)) = (
+            group.iter().position(|c| *c == a),
+            group.iter().position(|c| *c == b),
+        ) && pa.abs_diff(pb) == 1
+        {
+            return 60;
+        }
     }
     100
 }
@@ -228,12 +230,14 @@ fn advance(
         let mut best = delete.min(insert).min(sub);
         if i >= 2
             && let (Some(pv), Some(two)) = (prev, two_back)
-                && query[i - 1] == pv && query[i - 2] == cand {
-                    let t = two[i - 2].saturating_add(costs.transposition);
-                    if t < best {
-                        best = t;
-                    }
-                }
+            && query[i - 1] == pv
+            && query[i - 2] == cand
+        {
+            let t = two[i - 2].saturating_add(costs.transposition);
+            if t < best {
+                best = t;
+            }
+        }
         row[i] = best;
         if best < min {
             min = best;
@@ -343,7 +347,9 @@ pub(crate) fn roman_search(
             let mut ok = false;
             if let Some(two) = frame_has_two.then_some(&frame_two) {
                 for i in 2..=query_len {
-                    if query[i - 1] == frame_prev && two[i - 2].saturating_add(costs.transposition) <= max_cost {
+                    if query[i - 1] == frame_prev
+                        && two[i - 2].saturating_add(costs.transposition) <= max_cost
+                    {
                         ok = true;
                         break;
                     }
