@@ -1,21 +1,86 @@
 # upodesh
-`upodesh` (In Bangla, `উপদেশ` is a synonym of the word `পরামর্শ` which means `suggestion`) is a Bangla word suggestion library.
 
-This implementation uses an approach based on the Finite State Transducer (FST) data structure which is substantially faster than the Regular Expression based approach. This approach is inspired by the Go project [`libavrophonetic`](https://github.com/mugli/libavrophonetic/) of Mehdi Hasan Khan which used Trie data structure.
+`upodesh` (In Bangla, `উপদেশ` is a synonym of the word `পরামর্শ` which means
+`suggestion`) is a Bangla word suggestion library.
 
-## Benchmarks
-`upodesh` is significantly faster than the previously used heavily optimized regex-based search approach in OpenBangla Keyboard. Based on recent benchmarks, it is approximately ~21× to ~58× faster, depending on the input. This demonstrates a substantial performance gain over regex, especially in cases where large patterns previously caused bottlenecks.
-### 📊 Summary of the Benchmark
-This benchmark was performed on a Apple MacBook Air M1:
+It takes **already-converted Bangla text** and returns ranked, typo-tolerant
+suggestions. Phonetic conversion (Avro, Khipro, …) deliberately lives in
+`riti`/`okkhor`, not here.
 
-| Word   | `upodesh` Time | `regex` Time | Speedup         |
-| --------- | -------------- | ------------ | --------------- |
-| `a`       | ~3.341 µs      | ~194.34 µs    | **\~58× faster**  |
-| `arO`     | ~11.840 µs      | ~246.53 µs    | **\~20.8× faster**  |
-| `bistari` | ~9.734 µs      | ~353.74 µs    | **\~36.3× faster** |
+## How it works
 
+The index is one immutable, frequency-bearing FST over Unicode extended
+grapheme clusters. The same FST answers both operations:
 
+- **Typo correction** — a bounded weighted Damerau/optimal-string-alignment
+  automaton traverses the FST directly. It supports insertion, deletion,
+  substitution, adjacent transposition and Bangla-specific confusions
+  (for example শ/ষ/স, ন/ণ, ই/ঈ, ি/ী).
+- **Prefix completion** — a second automaton over the same keys. The final
+  query grapheme may be incomplete, so typing `ক` still matches words beginning
+  with `কা`.
+
+Input is NFC-normalized, and grapheme IDs are stored as big-endian `u16`s so
+edits never split a Bangla consonant from its dependent vowel sign. Ranking uses
+weighted edit cost plus the dictionary frequency prior; an optional Kneser–Ney
+bigram model can add context scoring.
+
+The upstream OpenBangla-Keyboard dictionary is imported as a git submodule at
+`data/openbangla-keyboard`. Only its `data/dictionary.json` is used.
+
+### Frequency prior
+
+`upodesh` ships `data/frequency.json`, derived from the Leipzig Corpora Collection
+(`ben_news_2020_300K` + `ben_wikipedia_2021_300K`, CC BY 4.0). It covers 40,882
+dictionary words and is loaded at build time. See `data/frequency.LICENSE` for
+provenance and attribution; regenerate it with
+`python3 generate/build_frequency.py`.
+
+## Usage
+
+```rust
+use upodesh::{corrector, CorrectionConfig};
+
+let corrector = corrector();
+
+// Typo-tolerant suggestions.
+let suggestions = corrector.suggest("বাংরা");
+
+// Prefix completion over the same index.
+let completions = corrector.complete_prefix("বাংলা", 10);
+
+// Ranked candidates with edit cost and frequency.
+for candidate in corrector.correct_with_context("বাং", &["আমি"], 10) {
+    println!("{} (cost {}, frequency {})", candidate.word, candidate.edit_cost, candidate.frequency);
+}
+```
+
+`corrector()` returns a process-wide index built once on first use. Building a
+custom index is possible with `Corrector::from_entries`, `with_edit_costs`,
+`with_config` and `with_language_model`.
+
+> **Frequency data:** corpus counts come from the Leipzig Corpora Collection
+> (CC BY 4.0), see `data/frequency.LICENSE`. Words absent from that corpus keep
+> frequency `1`, so rare dictionary entries rank below attested words. Supplying
+> your own frequencies through `WordEntry` is also supported.
+
+## Development
+
+```sh
+git submodule update --init --recursive
+cargo test
+cargo clippy --all-targets --all-features
+cargo bench --bench suggestions
+```
+
+`cargo run --manifest-path generate/Cargo.toml` reports the size and shape of
+the embedded dictionary.
 
 ## Acknowledgement
-* [Mehdi Hasan Khan](https://github.com/mugli) and [Tahmid Sadik](https://github.com/tahmidsadik/) for their [`libavrophonetic`](https://github.com/mugli/libavrophonetic/) project.
-* [Andrew Gallant](https://github.com/BurntSushi) for his amazing [`fst`](https://github.com/BurntSushi/fst) crate and [Index 1,600,000,000 Keys with Automata and Rust](https://burntsushi.net/transducers/) blog post!
+
+- [Mehdi Hasan Khan](https://github.com/mugli) and
+  [Tahmid Sadik](https://github.com/tahmidsadik/) for their
+  [`libavrophonetic`](https://github.com/mugli/libavrophonetic/) project.
+- [Andrew Gallant](https://github.com/BurntSushi) for the
+  [`fst`](https://github.com/BurntSushi/fst) crate and
+  [Index 1,600,000,000 Keys with Automata and Rust](https://burntsushi.net/transducers/).

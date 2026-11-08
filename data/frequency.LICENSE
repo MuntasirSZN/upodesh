@@ -1,0 +1,46 @@
+# Frequency data
+
+`data/frequency.json` is a derived word-count table used as the ranking prior for
+`upodesh`.
+
+## Source
+
+Counts are derived from the following corpora of the **Leipzig Corpora
+Collection** (Universität Leipzig):
+
+- `ben_news_2020_300K`
+- `ben_wikipedia_2021_300K`
+
+Downloads: <https://wortschatz.uni-leipzig.de/en/download/ben>
+
+## Licence
+
+The Leipzig Corpora Collection text corpora are made available under the
+**Creative Commons Attribution 4.0 International (CC BY 4.0)** licence:
+
+<https://creativecommons.org/licenses/by/4.0/>
+
+`data/frequency.json` is a derivative work: token counts from the corpora,
+summed across the two corpora, NFC-normalized, and filtered to words present in
+the OpenBangla-Keyboard dictionary. It is distributed under CC BY 4.0.
+
+The Rust source code of `upodesh` remains MIT-licensed.
+
+## Attribution
+
+> D. Goldhahn, T. Eckart and U. Quasthoff (2012): *Building Large Monolingual
+> Dictionaries at the Leipzig Corpora Collection: From 100 to 200 Languages.*
+> In: Proceedings of the 8th International Language Resources and Evaluation
+> Conference (LREC'12).
+
+Corpus data: Leipzig Corpora Collection, Universität Leipzig.
+
+## Regenerating
+
+```sh
+python3 generate/build_frequency.py
+```
+
+The script downloads the two corpora, extracts their `*-words.txt` files, and
+rewrites `data/frequency.json`. Builds pick the file up automatically through
+`build.rs`.
