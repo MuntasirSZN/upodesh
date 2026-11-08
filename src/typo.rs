@@ -1,3 +1,4 @@
+mod class_weights;
 mod automaton;
 mod dhoni;
 mod distance;
@@ -22,6 +23,7 @@ use crate::typo::distance::weighted_osa_distance;
 use crate::typo::normalize::{normalize_bengali, normalize_cow};
 use crate::typo::trie::Trie;
 
+pub use class_weights::ClassWeights;
 pub use language_model::BigramLanguageModel;
 pub use lemma::{LemmaPos, LemmaTable};
 pub use morphology::{Morphology, SuffixRule};
@@ -187,6 +189,25 @@ impl Default for EditCosts {
 }
 
 impl EditCosts {
+    /// Apply empirical class weights (see [`ClassWeights`]): insertion becomes
+    /// cheaper with more duplicate slips, deletion/transposition shift by
+    /// their own masses. Confusion entries are untouched — phonetic
+    /// calibration wants the learned confusion matrix, not a uniform tweak.
+    pub fn with_class_weights(self, weights: &ClassWeights) -> Self {
+        let adjusted_insertion =
+            (self.insertion as f64 * weights.insertion_multiplier()).round() as u16;
+        let adjusted_deletion =
+            (self.deletion as f64 * weights.deletion_multiplier()).round() as u16;
+        let adjusted_transposition =
+            (self.transposition as f64 * weights.transposition_multiplier()).round() as u16;
+        Self {
+            insertion: adjusted_insertion.clamp(1, 200),
+            deletion: adjusted_deletion.clamp(1, 200),
+            transposition: adjusted_transposition.clamp(1, 200),
+            ..self
+        }
+    }
+
     /// A conservative starter model for common Bengali orthographic
     /// confusions. These defaults are deliberately small and configurable;
     /// production costs should be learned from aligned IME error data.
@@ -572,23 +593,23 @@ pub struct Corrector {
 /// for virama words; Avro forms are upstream dhoni behavior verbatim.
 fn build_roman_tries(words: Vec<String>) -> [roman::RomanTrie; 2] {
     let mut words_blob = Vec::new();
-    let mut offs: BTreeMap<&str, u32> = BTreeMap::new();
+    let mut word_off: Vec<u32> = Vec::with_capacity(words.len());
     for w in &words {
-        offs.insert(w.as_str(), words_blob.len() as u32);
+        word_off.push(words_blob.len() as u32);
         words_blob.extend_from_slice(w.as_bytes());
     }
-    let mut avro_pairs: Vec<(Vec<u8>, u32, u32)> = Vec::new();
-    let mut khipro_pairs: Vec<(Vec<u8>, u32, u32)> = Vec::new();
-    for w in &words {
-        let (off, wlen) = (offs[w.as_str()], w.len() as u32);
+    let mut avro_pairs: Vec<(Vec<u8>, u32)> = Vec::new();
+    let mut khipro_pairs: Vec<(Vec<u8>, u32)> = Vec::new();
+    for (i, w) in words.iter().enumerate() {
+        let wid = i as u32;
         for form in dhoni::convert_to_phonetic_variants(w, dhoni::Mode::Avro) {
             if !form.is_empty() && form != *w {
-                avro_pairs.push((form.into_bytes(), off, wlen));
+                avro_pairs.push((form.into_bytes(), wid));
             }
         }
         for form in dhoni::convert_to_phonetic_variants(w, dhoni::Mode::Khipro) {
             if !form.is_empty() && form != *w {
-                khipro_pairs.push((form.into_bytes(), off, wlen));
+                khipro_pairs.push((form.into_bytes(), wid));
             }
         }
     }
@@ -596,8 +617,8 @@ fn build_roman_tries(words: Vec<String>) -> [roman::RomanTrie; 2] {
     avro_pairs.dedup();
     khipro_pairs.sort();
     khipro_pairs.dedup();
-    let a = roman::RomanTrie::build(&mut avro_pairs, words_blob.clone());
-    let k = roman::RomanTrie::build(&mut khipro_pairs, words_blob);
+    let a = roman::RomanTrie::build(&mut avro_pairs, words_blob.clone(), word_off.clone());
+    let k = roman::RomanTrie::build(&mut khipro_pairs, words_blob, word_off);
     [a, k]
 }
 
@@ -733,11 +754,8 @@ impl Corrector {
     /// The FST is streamed once into the grapheme trie; lookups never touch
     /// the FST again.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, BuildError> {
-        const MAGIC_V1: &[u8; 8] = b"UPDSHIX1";
-        const MAGIC_V2: &[u8; 8] = b"UPDSHIX2";
-        let is_v2 = bytes.get(..8) == Some(MAGIC_V2);
-        let is_v1 = bytes.get(..8) == Some(MAGIC_V1);
-        if !is_v1 && !is_v2 {
+        const MAGIC_V3: &[u8; 8] = b"UPDSHIX3";
+        if bytes.get(..8) != Some(MAGIC_V3) {
             return Err(BuildError::InvalidIndex("bad magic or truncated header"));
         }
         let magic_len = 8;
@@ -813,13 +831,29 @@ impl Corrector {
         let trie = builder.finish();
         let edit_costs = EditCosts::bengali();
         let specials = build_specials(&graphemes, &grapheme_ids, &edit_costs);
-        let roman: [roman::RomanTrie; 2] = if is_v2 {
+        let roman: [roman::RomanTrie; 2] = {
             let mut avro = roman::RomanTrie::empty();
             let mut khipro = roman::RomanTrie::empty();
             for slot in [&mut avro, &mut khipro] {
                 let (parsed, _) = roman::RomanTrie::read_from(bytes, &mut cursor)?;
                 *slot = parsed;
             }
+            let word_count = {
+                let chunk = bytes
+                    .get(cursor..cursor + 4)
+                    .ok_or(BuildError::InvalidIndex("truncated word count"))?;
+                cursor += 4;
+                u32::from_le_bytes(chunk.try_into().expect("4 bytes")) as usize
+            };
+            let mut word_off = Vec::with_capacity(word_count);
+            for _ in 0..word_count {
+                let chunk = bytes
+                    .get(cursor..cursor + 4)
+                    .ok_or(BuildError::InvalidIndex("truncated word offsets"))?;
+                cursor += 4;
+                word_off.push(u32::from_le_bytes(chunk.try_into().expect("4 bytes")));
+            }
+
             let wl = {
                 let chunk = bytes
                     .get(cursor..cursor + 4)
@@ -835,22 +869,18 @@ impl Corrector {
                 .ok_or(BuildError::InvalidIndex("truncated words"))?
                 .to_vec();
             cursor = end;
-            if is_v2 {
-                // Trailer checksum (Phase 6 integrity): FNV-1a of everything
-                // before it. Older blobs without a trailer stay readable.
-                if let Some(checksum) = bytes.get(cursor..cursor + 8) {
-                    let expect = u64::from_le_bytes(checksum.try_into().unwrap());
-                    let computed = fnv1a(&bytes[..cursor]);
-                    if expect != computed {
-                        return Err(BuildError::InvalidIndex("blob checksum mismatch"));
-                    }
+            // Trailer checksum (Phase 6 integrity): FNV-1a of everything
+            // before it. Older blobs without a trailer stay readable.
+            if let Some(checksum) = bytes.get(cursor..cursor + 8) {
+                let expect = u64::from_le_bytes(checksum.try_into().unwrap());
+                let computed = fnv1a(&bytes[..cursor]);
+                if expect != computed {
+                    return Err(BuildError::InvalidIndex("blob checksum mismatch"));
                 }
             }
-            avro.set_words(words.clone());
-            khipro.set_words(words);
+            avro.set_words(words.clone(), word_off.clone());
+            khipro.set_words(words, word_off);
             [avro, khipro]
-        } else {
-            [roman::RomanTrie::empty(), roman::RomanTrie::empty()]
         };
 
         Ok(Self {

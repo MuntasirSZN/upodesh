@@ -19,7 +19,7 @@ use fst::{Map, MapBuilder, Streamer};
 use unicode_normalization::UnicodeNormalization;
 use unicode_segmentation::UnicodeSegmentation;
 
-const MAGIC_V2: &[u8; 8] = b"UPDSHIX2";
+const MAGIC_V3: &[u8; 8] = b"UPDSHIX3";
 
 fn fnv1a(data: &[u8]) -> u64 {
     let mut hash = 0xcbf2_9ce4_8422_2325u64;
@@ -125,7 +125,7 @@ fn main() {
     let khipro_set = load_patterns(&khipro_bytes);
 
     let mut blob = Vec::new();
-    blob.extend_from_slice(MAGIC_V2);
+    blob.extend_from_slice(MAGIC_V3);
     blob.extend_from_slice(&(graphemes.len() as u32).to_le_bytes());
     for grapheme in &graphemes {
         blob.extend_from_slice(&(grapheme.len() as u32).to_le_bytes());
@@ -137,29 +137,27 @@ fn main() {
     // words blob + word offsets for roman terminal values
     let words: Vec<String> = entries.keys().cloned().collect();
     let mut words_blob = Vec::new();
-    let mut word_off: BTreeMap<String, u32> = BTreeMap::new();
-    for (i, w) in words.iter().enumerate() {
-        let _ = i;
-        word_off.insert(w.clone(), words_blob.len() as u32);
+    let mut word_off: Vec<u32> = Vec::with_capacity(words.len());
+    for w in &words {
+        word_off.push(words_blob.len() as u32);
         words_blob.extend_from_slice(w.as_bytes());
     }
     for set in [&avro_set, &khipro_set] {
-        // collect (form, off, len)
-        let mut forms: Vec<(Vec<u8>, u32, u32)> = Vec::new();
-        for w in &words {
+        // collect (form, word id)
+        let mut forms: Vec<(Vec<u8>, u32)> = Vec::new();
+        for (wi, w) in words.iter().enumerate() {
             for f in set.forms(w) {
                 if f.is_empty() {
                     continue;
                 }
-                let off = word_off[w.as_str()];
-                forms.push((f.into_bytes(), off, w.len() as u32));
+                forms.push((f.into_bytes(), wi as u32));
             }
         }
         forms.sort();
-        forms.dedup_by(|a, b| a == b);
+        forms.dedup();
         // build byte trie CSR
-        let mut nodes: Vec<(Vec<(u8, u32)>, Vec<(u32, u32)>)> = vec![(Vec::new(), Vec::new())];
-        for (form, off, len) in &forms {
+        let mut nodes: Vec<(Vec<(u8, u32)>, Vec<u32>)> = vec![(Vec::new(), Vec::new())];
+        for (form, wid) in &forms {
             let mut node = 0usize;
             for &b in form.iter() {
                 let pos = nodes[node].0.iter().position(|(l, _)| *l == b);
@@ -173,53 +171,48 @@ fn main() {
                     }
                 }
             }
-            nodes[node].1.push((*off, *len));
+            nodes[node].1.push(*wid);
         }
         let n = nodes.len();
-        let (mut start, mut cnt, mut eid, mut ech, mut t_start, mut t_alloc, mut t_off, mut t_len);
-        (start, cnt, eid, ech, t_start, t_alloc, t_off, t_len) = (
-            vec![0u32; n],
-            vec![0u32; n],
-            Vec::new(),
-            Vec::new(),
-            vec![0u32; n],
-            vec![0u32; n],
-            Vec::new(),
-            Vec::new(),
-        );
         let total: usize = nodes.iter().map(|(c, _)| c.len()).sum();
-        eid.reserve(total);
-        ech.reserve(total);
-        let mut offset = 0usize;
-        let mut toffset = 0usize;
+        let mut cnt = vec![0u8; n];
+        let mut eid = Vec::with_capacity(total);
+        let mut ech = Vec::with_capacity(total);
+        let mut t_alloc = vec![0u16; n];
+        let mut t_term = Vec::new();
         for (i, (ch, terms)) in nodes.iter().enumerate() {
-            start[i] = offset as u32;
-            cnt[i] = ch.len() as u32;
+            assert!(
+                ch.len() <= u8::MAX as usize,
+                "v3 u8 edge-count budget exceeded"
+            );
+            cnt[i] = ch.len() as u8;
             for &(b, c) in ch {
                 eid.push(b);
                 ech.push(c);
             }
-            offset += ch.len();
-            t_start[i] = toffset as u32;
-            t_alloc[i] = terms.len() as u32;
-            for &(o, l) in terms {
-                t_off.push(o);
-                t_len.push(l);
-            }
-            toffset += terms.len();
+            assert!(
+                terms.len() <= u16::MAX as usize,
+                "v3 u16 terminal-count budget exceeded"
+            );
+            t_alloc[i] = terms.len() as u16;
+            t_term.extend(terms.iter().copied());
         }
         blob.extend_from_slice(&(n as u32).to_le_bytes());
-        for v in [&start, &cnt] {
-            for x in v {
-                blob.extend_from_slice(&x.to_le_bytes());
-            }
-        }
+        blob.extend_from_slice(&cnt);
         blob.extend_from_slice(&eid);
-        for v in [&ech, &t_start, &t_alloc, &t_off, &t_len] {
-            for x in v {
-                blob.extend_from_slice(&x.to_le_bytes());
-            }
+        for x in &ech {
+            blob.extend_from_slice(&x.to_le_bytes());
         }
+        for x in &t_alloc {
+            blob.extend_from_slice(&x.to_le_bytes());
+        }
+        for x in &t_term {
+            blob.extend_from_slice(&x.to_le_bytes());
+        }
+    }
+    blob.extend_from_slice(&(word_off.len() as u32).to_le_bytes());
+    for x in &word_off {
+        blob.extend_from_slice(&x.to_le_bytes());
     }
     blob.extend_from_slice(&(words_blob.len() as u32).to_le_bytes());
     blob.extend_from_slice(&words_blob);

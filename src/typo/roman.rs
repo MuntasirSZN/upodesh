@@ -4,22 +4,25 @@ const ROW: usize = ROMAN_MAX + 1;
 
 /// Compact byte-trie for Roman spellings. Terminal entries point into a
 /// shared word blob holding Bangla strings.
+///
+/// v3 wire layout (UPDSHIX3) — `start`/`t_start` are *derived* from `cnt` /
+/// `t_alloc` prefix sums at load time and never serialized:
+/// `n u32, cnt[n] u8, eid bytes, ech[edges] u32, t_alloc[n] u16, t_term u32`.
 pub(crate) struct RomanTrie {
     pub(crate) start: Vec<u32>,
-    pub(crate) cnt: Vec<u32>,
+    pub(crate) cnt: Vec<u8>,
     pub(crate) eid: Vec<u8>,
     pub(crate) ech: Vec<u32>,
     pub(crate) t_start: Vec<u32>,
-    pub(crate) t_alloc: Vec<u32>,
-    pub(crate) t_off: Vec<u32>,
-    pub(crate) t_len: Vec<u32>,
+    pub(crate) t_alloc: Vec<u16>,
+    /// Terminal payload: word ids (resolved via `word_off` + `words`).
+    pub(crate) t_term: Vec<u32>,
     pub(crate) words: Vec<u8>,
+    pub(crate) word_off: Vec<u32>,
 }
 
 /// Trie node under construction: (outgoing edges, terminals).
-type Node = (Vec<(u8, u32)>, Vec<(u32, u32)>);
-/// One index entry: (Roman form, word offset, word length).
-type Pair = (Vec<u8>, u32, u32);
+type Node = (Vec<(u8, u32)>, Vec<u32>);
 
 impl RomanTrie {
     pub(crate) fn empty() -> Self {
@@ -30,21 +33,24 @@ impl RomanTrie {
             ech: Vec::new(),
             t_start: vec![0],
             t_alloc: vec![0],
-            t_off: Vec::new(),
-            t_len: Vec::new(),
+            t_term: Vec::new(),
             words: Vec::new(),
+            word_off: Vec::new(),
         }
     }
 
-    pub(crate) fn word(&self, off: u32, len: u32) -> &str {
-        let off = off as usize;
-        let len = len as usize;
-        let s = &self.words[off..off + len];
+    pub(crate) fn word(&self, wid: u32) -> &str {
+        let off = self.word_off[wid as usize] as usize;
+        let end = if (wid as usize) + 1 < self.word_off.len() {
+            self.word_off[wid as usize + 1] as usize
+        } else {
+            self.words.len()
+        };
+        let s = &self.words[off..end];
         std::str::from_utf8(s).unwrap_or("")
     }
 
-    /// Parse one v2 trie payload. Layout after `n` header sizes is consumed
-    /// by the caller via the returned cursor.
+    /// Parse one v3 trie payload. Packed arrays + derived prefix sums.
     pub(crate) fn read_from(
         bytes: &[u8],
         cursor: &mut usize,
@@ -68,8 +74,14 @@ impl RomanTrie {
             Ok(out)
         };
         let n = read_u32(cursor, "truncated roman nodes")? as usize;
-        let start = read_vec_u32(n, cursor, "truncated roman start")?;
-        let cnt = read_vec_u32(n, cursor, "truncated roman cnt")?;
+        let cnt_end = cursor
+            .checked_add(n)
+            .ok_or(super::BuildError::InvalidIndex("roman cnt overflow"))?;
+        let cnt: Vec<u8> = bytes
+            .get(*cursor..cnt_end)
+            .ok_or(super::BuildError::InvalidIndex("truncated roman cnt"))?
+            .to_vec();
+        *cursor = cnt_end;
         let total: usize = cnt.iter().map(|c| *c as usize).sum();
         let eid_end = cursor
             .checked_add(total)
@@ -80,11 +92,31 @@ impl RomanTrie {
             .to_vec();
         *cursor = eid_end;
         let ech = read_vec_u32(total, cursor, "truncated roman ech")?;
-        let t_start = read_vec_u32(n, cursor, "truncated roman t_start")?;
-        let t_alloc = read_vec_u32(n, cursor, "truncated roman t_alloc")?;
-        let t_words: usize = t_alloc.iter().map(|c| *c as usize).sum();
-        let t_off = read_vec_u32(t_words, cursor, "truncated roman t_off")?;
-        let t_len = read_vec_u32(t_words, cursor, "truncated roman t_len")?;
+        let t_end = cursor
+            .checked_add(n.saturating_mul(2))
+            .ok_or(super::BuildError::InvalidIndex("roman t_alloc overflow"))?;
+        let t_raw = bytes
+            .get(*cursor..t_end)
+            .ok_or(super::BuildError::InvalidIndex("truncated roman t_alloc"))?
+            .to_vec();
+        *cursor = t_end;
+        let mut t_start = Vec::with_capacity(n);
+        let mut t_alloc = Vec::with_capacity(n);
+        let mut acc = 0u32;
+        for chunk in t_raw.as_chunks::<2>().0 {
+            let v = u16::from_le_bytes(*chunk);
+            t_start.push(acc);
+            t_alloc.push(v);
+            acc += v as u32;
+        }
+        let t_words = acc as usize;
+        let t_term = read_vec_u32(t_words, cursor, "truncated roman term")?;
+        let mut start = Vec::with_capacity(n);
+        let mut acc = 0u32;
+        for c in &cnt {
+            start.push(acc);
+            acc += *c as u32;
+        }
         Ok((
             Self {
                 start,
@@ -93,18 +125,22 @@ impl RomanTrie {
                 ech,
                 t_start,
                 t_alloc,
-                t_off,
-                t_len,
+                t_term,
                 words: Vec::new(),
+                word_off: Vec::new(),
             },
             Vec::new(),
         ))
     }
 
-    /// Build one trie from (form bytes, word address) pairs.
-    pub(crate) fn build(pairs: &mut [Pair], words_blob: Vec<u8>) -> Self {
+    /// Build one trie from (form bytes, word id) pairs.
+    pub(crate) fn build(
+        pairs: &mut [(Vec<u8>, u32)],
+        words_blob: Vec<u8>,
+        word_off: Vec<u32>,
+    ) -> Self {
         let mut nodes: Vec<Node> = vec![(Vec::new(), Vec::new())];
-        for (form, off, len) in pairs.iter() {
+        for (form, wid) in pairs.iter() {
             let mut node = 0usize;
             for &b in form.iter() {
                 let pos = nodes[node].0.iter().position(|(l, _)| *l == b);
@@ -118,34 +154,32 @@ impl RomanTrie {
                     }
                 }
             }
-            nodes[node].1.push((*off, *len));
+            nodes[node].1.push(*wid);
         }
         let n = nodes.len();
         let total: usize = nodes.iter().map(|(c, _)| c.len()).sum();
         let mut start = vec![0u32; n];
-        let mut cnt = vec![0u32; n];
+        let mut cnt = vec![0u8; n];
         let mut eid = Vec::with_capacity(total);
         let mut ech = Vec::with_capacity(total);
         let mut t_start = vec![0u32; n];
-        let mut t_alloc = vec![0u32; n];
-        let mut t_off = Vec::new();
-        let mut t_len = Vec::new();
+        let mut t_alloc = vec![0u16; n];
+        let mut t_term = Vec::new();
         let mut offset = 0usize;
         let mut toffset = 0usize;
         for (i, (ch, terms)) in nodes.iter().enumerate() {
             start[i] = offset as u32;
-            cnt[i] = ch.len() as u32;
+            assert!(ch.len() <= u8::MAX as usize, "v3 u8 edge-count budget exceeded");
+            cnt[i] = ch.len() as u8;
             for &(b, c) in ch {
                 eid.push(b);
                 ech.push(c);
             }
             offset += ch.len();
             t_start[i] = toffset as u32;
-            t_alloc[i] = terms.len() as u32;
-            for &(o, l) in terms {
-                t_off.push(o);
-                t_len.push(l);
-            }
+            assert!(terms.len() <= u16::MAX as usize, "v3 u16 terminal-count budget exceeded");
+            t_alloc[i] = terms.len() as u16;
+            t_term.extend(terms.iter().copied());
             toffset += terms.len();
         }
         Self {
@@ -155,14 +189,15 @@ impl RomanTrie {
             ech,
             t_start,
             t_alloc,
-            t_off,
-            t_len,
+            t_term,
             words: words_blob,
+            word_off,
         }
     }
 
-    pub(crate) fn set_words(&mut self, words: Vec<u8>) {
+    pub(crate) fn set_words(&mut self, words: Vec<u8>, word_off: Vec<u32>) {
         self.words = words;
+        self.word_off = word_off;
     }
 }
 
@@ -310,8 +345,8 @@ pub(crate) fn roman_search(
                 let edit = frame.row[query_len];
                 if edit <= max_cost {
                     for k in 0..t_count {
-                        let idx = (t_start + k) as usize;
-                        let word = trie.word(trie.t_off[idx], trie.t_len[idx]);
+                        let idx = (t_start + k as u32) as usize;
+                        let word = trie.word(trie.t_term[idx]);
                         out.push((word.to_owned(), edit));
                     }
                 }
