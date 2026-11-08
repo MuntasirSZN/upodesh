@@ -56,7 +56,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use serde_json::Value;
-    use unicode_normalization::UnicodeNormalization;
+    use simd_normalizer::UnicodeNormalization;
 
     use super::*;
 
@@ -72,7 +72,7 @@ mod tests {
         for words in root.as_object().into_iter().flat_map(|b| b.values()) {
             for word in words.as_array().into_iter().flatten() {
                 if let Some(word) = word.as_str() {
-                    let normalized: String = word.nfc().collect();
+                    let normalized: String = word.nfc().into_owned();
                     let frequency = frequencies.get(&normalized).copied().unwrap_or(1);
                     entries.push(WordEntry::new(normalized, frequency));
                 }

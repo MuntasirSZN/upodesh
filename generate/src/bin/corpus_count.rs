@@ -15,7 +15,7 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 
-use unicode_normalization::UnicodeNormalization;
+use simd_normalizer::UnicodeNormalization;
 
 const PUNCT: &[char] = &[
     ',', '.', ';', ':', '!', '?', '(', ')', '[', ']', '{', '}', '"', '\'', '-', '।', '॥', 'ך', '։',
@@ -50,7 +50,7 @@ fn main() {
                 .flatten()
                 .filter_map(|w| w.as_str())
             {
-                let word: String = word.trim().nfc().collect();
+                let word: String = word.trim().nfc().into_owned();
                 if !word.is_empty() {
                     words.insert(word);
                 }
@@ -69,7 +69,7 @@ fn main() {
             break;
         }
         let line = String::from_utf8_lossy(&buf);
-        let normalized: String = line.nfc().collect();
+        let normalized: String = line.nfc().into_owned();
         for token in normalized.split_whitespace() {
             let token = token.trim_matches(PUNCT);
             if token.is_empty() {

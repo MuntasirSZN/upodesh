@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 serde_json = "1.0"
-unicode-normalization = "0.1"
+simd-normalizer = "0.1"
 
 [[bin]]
 name = "corpus-count"

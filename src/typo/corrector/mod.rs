@@ -1301,7 +1301,7 @@ mod tests {
     use super::super::types::WordEntry;
     use super::*;
     use std::collections::BTreeSet;
-    use unicode_normalization::UnicodeNormalization;
+    use simd_normalizer::UnicodeNormalization;
     use unicode_segmentation::UnicodeSegmentation;
 
     fn test_corrector() -> Corrector {
@@ -1496,7 +1496,7 @@ mod tests {
     #[test]
     fn normalizes_canonically_equivalent_input() {
         let corrector = Corrector::from_words(["বাংলা"]).unwrap();
-        let nfd = "বাংলা".nfd().collect::<String>();
+        let nfd = "বাংলা".nfd().into_owned();
         assert_eq!(corrector.suggest_with(&nfd, 1), vec!["বাংলা".to_owned()]);
     }
 

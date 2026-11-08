@@ -14,7 +14,7 @@ use std::{
 };
 
 use fst::{Map, MapBuilder, Streamer};
-use unicode_normalization::UnicodeNormalization;
+use simd_normalizer::UnicodeNormalization;
 use unicode_segmentation::UnicodeSegmentation;
 
 const MAGIC_V3: &[u8; 8] = b"UPDSHIX3";
@@ -29,7 +29,7 @@ fn fnv1a(data: &[u8]) -> u64 {
 }
 
 fn normalize(word: &str) -> String {
-    word.nfc().collect()
+    word.nfc().into_owned()
 }
 
 fn main() {

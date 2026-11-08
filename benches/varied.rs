@@ -5,7 +5,7 @@
 use std::hint::black_box;
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use unicode_normalization::UnicodeNormalization;
+use simd_normalizer::UnicodeNormalization;
 use unicode_segmentation::UnicodeSegmentation;
 use upodesh::corrector;
 
@@ -32,7 +32,7 @@ fn varied(c: &mut Criterion) {
         .flat_map(|v| v.as_array().into_iter().flatten())
         .filter_map(|v| v.as_str())
         .map(|w| {
-            let n: String = w.nfc().collect();
+            let n: String = w.nfc().into_owned();
             n
         })
         .collect();

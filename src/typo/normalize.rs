@@ -1,22 +1,18 @@
 use std::borrow::Cow;
 
-use unicode_normalization::{UnicodeNormalization, is_nfc};
+use simd_normalizer::UnicodeNormalization;
 
 /// Canonical Unicode normalization shared by indexing and lookup.
 ///
 /// Do not strip Bengali marks, virama, ZWJ or ZWNJ here: those can change the
 /// spelling/orthography. NFC only makes canonically equivalent encodings equal.
 pub(crate) fn normalize_bengali(input: &str) -> String {
-    input.nfc().collect()
+    input.nfc().into_owned()
 }
 
 /// Borrow the input when it is already NFC, avoiding an allocation on the
-/// common path. The caller must treat the returned `Cow` as the normalized
-/// text; when normalization is needed the owned string is NFC.
+/// common path. `simd-normalizer` returns `Cow::Borrowed` for already-normalized
+/// input, so this is a zero-allocation fast path on clean text.
 pub(crate) fn normalize_cow(input: &str) -> Cow<'_, str> {
-    if is_nfc(input) {
-        Cow::Borrowed(input)
-    } else {
-        Cow::Owned(input.nfc().collect())
-    }
+    input.nfc()
 }
