@@ -7,10 +7,11 @@ nothing from bangla.gov.bd is vendored here. Contact pdeblict@bcc.net.bd /
 `/bn/service-request` if licensing for research use needs to be cleared.
 
 - `openbangla-keyboard/data/dictionary.json` — submodule, upstream license.
+- `src/typo/dhoni.rs` — vendored copy of [OpenBangla/dhoni](https://github.com/OpenBangla/dhoni) (MIT, commit `ea64a5c`), used for Roman-form generation; see file header.
 - `frequency.json` — Leipzig Corpora Collection (CC BY 4.0); see
   `frequency.LICENSE` for attribution.
 - `avro-patterns.json`, `khipro-patterns.json`, `common-patterns.txt` —
   generated tables from the OpenBangla organization repositories
   (`upodesh` main/khipro) derived from okkhor/riti rules; internal use only.
-- `khipro-testcases.tsv` — KhiproTeam Khipro layout test corpus
+- `khipro-testcases.tsv` — KhiproTeam Khipro layout test corpus (105 rows), synced with [rank-coder/khipro-m17n](https://github.com/rank-coder/khipro-m17n) (MIT, © 2024 rank_coder) for the `f`, `........` and `,,,,,,,,` rows.
   (used as regression vectors only).

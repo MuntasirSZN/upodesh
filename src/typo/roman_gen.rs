@@ -11,7 +11,7 @@
 // Shared verbatim by `build.rs` (compile-time index) and `typo.rs`
 // (`from_entries` runtime construction) via `include!`.
 
-pub(crate) const MAX_FORMS_PER_WORD: usize = 4;
+pub(crate) const MAX_FORMS_PER_WORD: usize = 2;
 
 pub(crate) struct PatternSet {
     /// Transliterate prefix trie: byte edges, terminal Roman keys.
@@ -88,7 +88,10 @@ impl PatternSet {
             let mut node = 0usize;
             let mut blen = 0usize;
             for &b in suffix.as_bytes() {
-                let pos = self.nodes[node].next.iter().position(|(label, _)| *label == b);
+                let pos = self.nodes[node]
+                    .next
+                    .iter()
+                    .position(|(label, _)| *label == b);
                 let Some(p) = pos else { break };
                 node = self.nodes[node].next[p].1 as usize;
                 // Walk every byte; only record matches on char boundaries,

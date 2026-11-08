@@ -1,4 +1,5 @@
 mod automaton;
+mod dhoni;
 mod distance;
 mod language_model;
 mod morphology;
@@ -550,9 +551,10 @@ pub struct Corrector {
     language_model: Option<BigramLanguageModel>,
 }
 
-/// Build both Roman tries from word list using `dhoni` transliteration.
-/// Both conventions share the canonical `dhoni` form; mode differences are
-/// resolved at score time (Bangla side carries the compositional proof).
+/// Build both Roman tries from word list using the patched vendored `dhoni`
+/// transliteration (`src/typo/dhoni.rs`). Khipro forms use Khipro mode, so
+/// they carry `/` candrabindu markers, `t/` for ৎ, and trailing-`/` variants
+/// for virama words; Avro forms are upstream dhoni behavior verbatim.
 fn build_roman_tries(words: Vec<String>) -> [roman::RomanTrie; 2] {
     let mut words_blob = Vec::new();
     let mut offs: BTreeMap<&str, u32> = BTreeMap::new();
@@ -560,23 +562,33 @@ fn build_roman_tries(words: Vec<String>) -> [roman::RomanTrie; 2] {
         offs.insert(w.as_str(), words_blob.len() as u32);
         words_blob.extend_from_slice(w.as_bytes());
     }
-    let mut pairs: Vec<(Vec<u8>, u32, u32)> = Vec::new();
+    let mut avro_pairs: Vec<(Vec<u8>, u32, u32)> = Vec::new();
+    let mut khipro_pairs: Vec<(Vec<u8>, u32, u32)> = Vec::new();
     for w in &words {
-        let form = dhoni::convert_to_phonetic(w);
-        if form.is_empty() || form == *w {
-            continue;
-        }
         let (off, wlen) = (offs[w.as_str()], w.len() as u32);
-        pairs.push((form.into_bytes(), off, wlen));
+        for form in dhoni::convert_to_phonetic_variants(w, dhoni::Mode::Avro) {
+            if !form.is_empty() && form != *w {
+                avro_pairs.push((form.into_bytes(), off, wlen));
+            }
+        }
+        for form in dhoni::convert_to_phonetic_variants(w, dhoni::Mode::Khipro) {
+            if !form.is_empty() && form != *w {
+                khipro_pairs.push((form.into_bytes(), off, wlen));
+            }
+        }
     }
-    pairs.sort();
-    pairs.dedup();
-    let avro_pairs = pairs.clone();
-    let khipro_pairs = pairs;
-    let a = roman::RomanTrie::build(&mut avro_pairs.clone(), words_blob.clone());
-    let k = roman::RomanTrie::build(&mut khipro_pairs.clone(), words_blob);
+    avro_pairs.sort();
+    avro_pairs.dedup();
+    khipro_pairs.sort();
+    khipro_pairs.dedup();
+    let a = roman::RomanTrie::build(&mut avro_pairs, words_blob.clone());
+    let k = roman::RomanTrie::build(&mut khipro_pairs, words_blob);
     [a, k]
 }
+
+/// One merged candidate's combined scores: (score, edit cost, roman cost,
+/// frequency, context probability).
+type ScoreEntry = (f64, u16, Option<u16>, u64, Option<f64>);
 
 impl Corrector {
     /// Build an index from words, assigning frequency 1 to every distinct word.
@@ -734,6 +746,7 @@ impl Corrector {
         let fst_bytes = bytes
             .get(cursor..end)
             .ok_or(BuildError::InvalidIndex("truncated FST data"))?;
+        cursor = end;
         let map = Map::new(fst_bytes.to_vec())?;
 
         let mut max_dict_len = 0usize;
@@ -785,7 +798,6 @@ impl Corrector {
                 .get(cursor..end)
                 .ok_or(BuildError::InvalidIndex("truncated words"))?
                 .to_vec();
-            cursor = end;
             avro.set_words(words.clone());
             khipro.set_words(words);
             [avro, khipro]
@@ -1028,7 +1040,7 @@ impl Corrector {
     /// not independent probabilities).
     pub fn suggest_input(&self, query: &SuggestionInput<'_>, limit: usize) -> Vec<Suggestion> {
         let bangla_hits = self.correct_with_context(query.bangla, query.context, limit.max(20));
-        let mut scores: std::collections::HashMap<String, (f64, u16, Option<u16>, u64, Option<f64>)> =
+        let mut scores: std::collections::HashMap<String, ScoreEntry> =
             std::collections::HashMap::new();
         for c in &bangla_hits {
             scores.insert(
@@ -1036,8 +1048,8 @@ impl Corrector {
                 (c.score, c.edit_cost, None, c.frequency, c.context_probability),
             );
         }
-        if let Some(roman) = query.roman {
-            if self.config.roman_weight > 0.0 {
+        if let Some(roman) = query.roman
+            && self.config.roman_weight > 0.0 {
                 let idx = match query.mode {
                     InputMode::Avro => 0,
                     InputMode::Khipro => 1,
@@ -1070,7 +1082,6 @@ impl Corrector {
                     entry.2 = Some(rcost);
                 }
             }
-        }
         let mut out: Vec<Suggestion> = scores
             .into_iter()
             .map(|(word, (bscore, ecost, rcost, freq, cprob))| {

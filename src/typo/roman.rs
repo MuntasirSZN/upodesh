@@ -1,5 +1,3 @@
-use std::cmp::Ordering;
-
 pub(crate) const INF: u16 = u16::MAX;
 const ROMAN_MAX: usize = 40;
 const ROW: usize = ROMAN_MAX + 1;
@@ -17,6 +15,11 @@ pub(crate) struct RomanTrie {
     pub(crate) t_len: Vec<u32>,
     pub(crate) words: Vec<u8>,
 }
+
+/// Trie node under construction: (outgoing edges, terminals).
+type Node = (Vec<(u8, u32)>, Vec<(u32, u32)>);
+/// One index entry: (Roman form, word offset, word length).
+type Pair = (Vec<u8>, u32, u32);
 
 impl RomanTrie {
     pub(crate) fn empty() -> Self {
@@ -95,8 +98,8 @@ impl RomanTrie {
     }
 
     /// Build one trie from (form bytes, word address) pairs.
-    pub(crate) fn build(pairs: &mut [(Vec<u8>, u32, u32)], words_blob: Vec<u8>) -> Self {
-        let mut nodes: Vec<(Vec<(u8, u32)>, Vec<(u32, u32)>)> = vec![(Vec::new(), Vec::new())];
+    pub(crate) fn build(pairs: &mut [Pair], words_blob: Vec<u8>) -> Self {
+        let mut nodes: Vec<Node> = vec![(Vec::new(), Vec::new())];
         for (form, off, len) in pairs.iter() {
             let mut node = 0usize;
             for &b in form.iter() {
@@ -191,11 +194,9 @@ fn neighbor_cost(a: u8, b: u8) -> u16 {
     ];
     for group in GROUPS {
         if let (Some(pa), Some(pb)) = (group.iter().position(|c| *c == a), group.iter().position(|c| *c == b))
-        {
-            if pa.abs_diff(pb) == 1 {
+            && pa.abs_diff(pb) == 1 {
                 return 60;
             }
-        }
     }
     100
 }
@@ -207,28 +208,32 @@ fn advance(
     cand: u8,
     query_len: usize,
     query: &[u8],
-    insertion: u16,
-    deletion: u16,
-    transposition: u16,
+    costs: &RomanCosts,
 ) -> ([u16; ROW], u16) {
     let mut row = [INF; ROW];
-    row[0] = parent[0].saturating_add(insertion);
+    row[0] = parent[0].saturating_add(costs.insertion);
     let mut min = row[0];
     for i in 1..=query_len {
-        let delete = parent[i].saturating_add(deletion);
+        let delete = parent[i].saturating_add(costs.deletion);
+        // Repeated-char rule: a doubled letter in the query (e.g. "banngla"
+        // for "bangla") matching the just-consumed trie byte is a much more
+        // likely slip than a random stray letter — half-price insertion.
+        let insertion = if query[i - 1] == cand {
+            costs.insertion / 2
+        } else {
+            costs.insertion
+        };
         let insert = row[i - 1].saturating_add(insertion);
         let sub = parent[i - 1].saturating_add(sub_cost(query[i - 1] as u16, cand, query));
         let mut best = delete.min(insert).min(sub);
-        if i >= 2 {
-            if let (Some(pv), Some(two)) = (prev, two_back) {
-                if query[i - 1] == pv && query[i - 2] == cand {
-                    let t = two[i - 2].saturating_add(transposition);
+        if i >= 2
+            && let (Some(pv), Some(two)) = (prev, two_back)
+                && query[i - 1] == pv && query[i - 2] == cand {
+                    let t = two[i - 2].saturating_add(costs.transposition);
                     if t < best {
                         best = t;
                     }
                 }
-            }
-        }
         row[i] = best;
         if best < min {
             min = best;
@@ -261,8 +266,8 @@ pub(crate) fn roman_search(
     let start = |deletion: u16, len: usize| -> ([u16; ROW], u16) {
         let mut row = [INF; ROW];
         row[0] = 0;
-        for i in 1..=len {
-            row[i] = (i as u16).saturating_mul(deletion);
+        for (i, cell) in row.iter_mut().enumerate().skip(1).take(len) {
+            *cell = (i as u16).saturating_mul(deletion);
         }
         (row, 0)
     };
@@ -331,9 +336,7 @@ pub(crate) fn roman_search(
             cand,
             query_len,
             &query[..query_len],
-            costs.insertion,
-            costs.deletion,
-            costs.transposition,
+            costs,
         );
         if min > max_cost && !frame_has_two {
             // still allow transposition recovery via two-back
@@ -382,8 +385,4 @@ pub(crate) fn roman_search(
     out.sort_by(|a, b| a.1.cmp(&b.1).then(a.0.cmp(&b.0)));
     out.dedup_by(|a, b| a.0 == b.0 && a.1 == b.1);
     out
-}
-
-pub(crate) fn cmp_score(a: u16, b: u16) -> Ordering {
-    a.cmp(&b)
 }
