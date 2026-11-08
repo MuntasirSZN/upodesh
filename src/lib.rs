@@ -18,7 +18,7 @@ pub mod typo;
 
 pub use typo::{
     BigramLanguageModel, BuildError, Correction, CorrectionConfig, Corrector, EditCosts,
-    Morphology, SuffixRule, WordEntry,
+    InputMode, Morphology, Suggestion, SuggestionInput, SuffixRule, WordEntry,
 };
 
 /// Build-time generated grapheme table + FST blob, see `build.rs`.

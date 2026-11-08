@@ -1,13 +1,13 @@
-//! Build-time construction of the embedded correction index.
+//! Build-time construction of the embedded correction index (v2).
 //!
-//! The runtime crate must not parse the 4 MB upstream dictionary or build an
-//! FST on first use. Instead this script performs the same normalization,
-//! grapheme segmentation and FST construction that `Corrector::from_entries`
-//! does, then writes a self-contained blob that `Corrector::from_bytes` maps
-//! back with a single `fst::Map::new` call.
-//!
-//! Keep the encoding in sync with `src/typo.rs` (`from_entries`/`from_bytes`).
-//! `tests::embedded_index_matches_in_memory_build` guards the two paths.
+//! The runtime `Corrector::from_bytes` maps one blob containing:
+//! Bangla grapheme table + Bangla FST + two Roman tries (Avro, Khipro).
+//! Roman tries are built from the pattern tables derived from okkhor/riti
+//! rules (see `data/ATTRIBUTION.md`); see `src/typo/roman_gen.rs`.
+
+#![allow(dead_code, clippy::all)]
+
+include!("src/typo/roman_gen.rs");
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -19,7 +19,7 @@ use fst::{Map, MapBuilder, Streamer};
 use unicode_normalization::UnicodeNormalization;
 use unicode_segmentation::UnicodeSegmentation;
 
-const MAGIC: &[u8; 8] = b"UPDSHIX1";
+const MAGIC_V2: &[u8; 8] = b"UPDSHIX2";
 
 fn normalize(word: &str) -> String {
     word.nfc().collect()
@@ -33,18 +33,17 @@ fn main() {
 
     println!("cargo:rerun-if-changed={}", dictionary.display());
     println!("cargo:rerun-if-changed={}", frequencies.display());
+    println!("cargo:rerun-if-changed={}", manifest.join("data/avro-patterns.json").display());
+    println!("cargo:rerun-if-changed={}", manifest.join("data/khipro-patterns.json").display());
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=src/typo/roman_gen.rs");
 
     let text = fs::read_to_string(&dictionary).expect("read upstream dictionary.json");
     let root: serde_json::Value = serde_json::from_str(&text).expect("dictionary.json is JSON");
 
-    // Optional corpus frequencies. The upstream repo ships only a word list,
-    // so this file is the injection point for a real frequency table.
     let frequency_table: BTreeMap<String, u64> = fs::read_to_string(&frequencies)
         .ok()
-        .map(|text| {
-            serde_json::from_str(&text).expect("data/frequency.json is a word-to-count object")
-        })
+        .map(|text| serde_json::from_str(&text).expect("frequency table is JSON"))
         .unwrap_or_default();
 
     let mut entries = BTreeMap::<String, u64>::new();
@@ -102,22 +101,109 @@ fn main() {
             .expect("insert dictionary word");
     }
     let map = builder.into_map();
-    let map_bytes = map.as_fst().as_bytes();
+    let map_bytes = map.as_fst().as_bytes().to_vec();
 
-    let mut blob = Vec::with_capacity(8 + 4 + graphemes.len() * 8 + map_bytes.len());
-    blob.extend_from_slice(MAGIC);
+    // ---- Roman tries for both modes -------------------------------
+    let avro_bytes = fs::read(manifest.join("data/avro-patterns.json")).unwrap_or_default();
+    let khipro_bytes =
+        fs::read(manifest.join("data/khipro-patterns.json")).unwrap_or_default();
+    let avro_set = load_patterns(&avro_bytes);
+    let khipro_set = load_patterns(&khipro_bytes);
+
+    let mut blob = Vec::new();
+    blob.extend_from_slice(MAGIC_V2);
     blob.extend_from_slice(&(graphemes.len() as u32).to_le_bytes());
     for grapheme in &graphemes {
         blob.extend_from_slice(&(grapheme.len() as u32).to_le_bytes());
         blob.extend_from_slice(grapheme.as_bytes());
     }
     blob.extend_from_slice(&(map_bytes.len() as u32).to_le_bytes());
-    blob.extend_from_slice(map_bytes);
+    blob.extend_from_slice(&map_bytes);
+
+    // words blob + word offsets for roman terminal values
+    let words: Vec<String> = entries.keys().cloned().collect();
+    let mut words_blob = Vec::new();
+    let mut word_off: BTreeMap<String, u32> = BTreeMap::new();
+    for (i, w) in words.iter().enumerate() {
+        let _ = i;
+        word_off.insert(w.clone(), words_blob.len() as u32);
+        words_blob.extend_from_slice(w.as_bytes());
+    }
+    for set in [&avro_set, &khipro_set] {
+        // collect (form, off, len)
+        let mut forms: Vec<(Vec<u8>, u32, u32)> = Vec::new();
+        for w in &words {
+            for f in set.forms(w) {
+                if f.is_empty() {
+                    continue;
+                }
+                let off = word_off[w.as_str()];
+                forms.push((f.into_bytes(), off, w.len() as u32));
+            }
+        }
+        forms.sort();
+        forms.dedup_by(|a, b| a == b);
+        // build byte trie CSR
+        let mut nodes: Vec<(Vec<(u8, u32)>, Vec<(u32, u32)>)> = vec![(Vec::new(), Vec::new())];
+        for (form, off, len) in &forms {
+            let mut node = 0usize;
+            for &b in form.iter() {
+                let pos = nodes[node].0.iter().position(|(l, _)| *l == b);
+                match pos {
+                    Some(p) => node = nodes[node].0[p].1 as usize,
+                    None => {
+                        nodes.push((Vec::new(), Vec::new()));
+                        let child = (nodes.len() - 1) as u32;
+                        nodes[node].0.push((b, child));
+                        node = child as usize;
+                    }
+                }
+            }
+            nodes[node].1.push((*off, *len));
+        }
+        let n = nodes.len();
+        let (mut start, mut cnt, mut eid, mut ech, mut t_start, mut t_alloc, mut t_off, mut t_len);
+        (start, cnt, eid, ech, t_start, t_alloc, t_off, t_len) = (vec![0u32; n], vec![0u32; n], Vec::new(), Vec::new(), vec![0u32; n], vec![0u32; n], Vec::new(), Vec::new());
+        let total: usize = nodes.iter().map(|(c, _)| c.len()).sum();
+        eid.reserve(total);
+        ech.reserve(total);
+        let mut offset = 0usize;
+        let mut toffset = 0usize;
+        for (i, (ch, terms)) in nodes.iter().enumerate() {
+            start[i] = offset as u32;
+            cnt[i] = ch.len() as u32;
+            for &(b, c) in ch {
+                eid.push(b);
+                ech.push(c);
+            }
+            offset += ch.len();
+            t_start[i] = toffset as u32;
+            t_alloc[i] = terms.len() as u32;
+            for &(o, l) in terms {
+                t_off.push(o);
+                t_len.push(l);
+            }
+            toffset += terms.len();
+        }
+        blob.extend_from_slice(&(n as u32).to_le_bytes());
+        for v in [&start, &cnt] {
+            for x in v {
+                blob.extend_from_slice(&x.to_le_bytes());
+            }
+        }
+        blob.extend_from_slice(&eid);
+        for v in [&ech, &t_start, &t_alloc, &t_off, &t_len] {
+            for x in v {
+                blob.extend_from_slice(&x.to_le_bytes());
+            }
+        }
+    }
+    blob.extend_from_slice(&(words_blob.len() as u32).to_le_bytes());
+    blob.extend_from_slice(&words_blob);
 
     fs::write(&out, &blob).expect("write build-time dictionary index");
 
-    // A cheap consistency probe: every encoded key must be present.
-    let map = Map::new(map.as_fst().as_bytes().to_vec()).expect("reopen generated FST");
+    let map = Map::new(map_bytes.clone()).expect("reopen generated FST");
     let mut stream = map.stream();
     let mut count = 0_usize;
     while stream.next().is_some() {
