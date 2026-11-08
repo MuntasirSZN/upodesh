@@ -1,5 +1,7 @@
+#[cfg(test)]
 use super::EditCosts;
 
+#[cfg(test)]
 const INF: u16 = u16::MAX;
 
 /// Weighted optimal-string-alignment distance (restricted Damerau-Levenshtein)
@@ -10,7 +12,7 @@ const INF: u16 = u16::MAX;
 /// The FST automaton already tracks this exact distance during traversal
 /// (see `WeightedDamerauState::cost`). This function remains as the
 /// brute-force reference used by tests to validate the automaton.
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg(test)]
 pub(crate) fn weighted_osa_distance(
     query: &[String],
     candidate: &[String],

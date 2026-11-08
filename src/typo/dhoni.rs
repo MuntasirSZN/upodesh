@@ -201,8 +201,6 @@ pub(crate) fn convert_to_phonetic_mode(input: &str, mode: Mode) -> String {
 }
 
 /// Single canonical Avro form — upstream entry point, unchanged semantics.
-/// Retained from the vendored upstream API (tests and doc examples use it).
-#[allow(dead_code)]
 pub(crate) fn convert_to_phonetic(input: &str) -> String {
     convert_to_phonetic_mode(input, Mode::Avro)
 }
@@ -213,7 +211,10 @@ pub(crate) fn convert_to_phonetic(input: &str) -> String {
 /// trailing-`/` slash-suppression variant (module doc, patch 2) for words
 /// containing a virama.
 pub(crate) fn convert_to_phonetic_variants(input: &str, mode: Mode) -> Vec<String> {
-    let primary = convert_to_phonetic_mode(input, mode);
+    let primary = match mode {
+        Mode::Avro => convert_to_phonetic(input),
+        Mode::Khipro => convert_to_phonetic_mode(input, Mode::Khipro),
+    };
     if mode == Mode::Khipro && input.contains('্') && !primary.is_empty() && !primary.ends_with('/')
     {
         let mut suppressed = primary.clone();

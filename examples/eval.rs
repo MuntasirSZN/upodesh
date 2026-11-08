@@ -12,7 +12,6 @@
 //!   cargo run --release --example eval -- data/eval/banglasec-test.csv.gz
 
 use std::collections::HashMap;
-use std::io::Read;
 use std::process::Command;
 
 use upodesh::corrector;
@@ -104,6 +103,3 @@ fn main() {
         println!("  {class}: Top-1={:.1}% ({hits}/{count})", pct(*hits));
     }
 }
-
-#[allow(dead_code)]
-fn _read_ensure(_: &dyn Read) {}

@@ -44,23 +44,41 @@ pub(crate) fn substitution(
 /// uses `two_back` (`row[j-1]`), `prev_candidate` (`c[j]`) and the candidate
 /// (`c[j+1]`). Grapheme equality for the transposition test uses IDs when
 /// both query graphemes are in the table and string slices otherwise.
-#[allow(clippy::too_many_arguments)]
+///
+/// Arguments are bundled (clippy `too_many_arguments`).
+pub(crate) struct RowAdvance<'a> {
+    pub parent: &'a Row,
+    pub two_back: Option<&'a Row>,
+    pub prev_candidate: Option<u16>,
+    pub candidate: u16,
+    pub query_len: usize,
+    pub query_ids: &'a [Option<u16>],
+    pub query_slices: &'a [&'a str],
+    pub specials: &'a [&'a [(u16, u16)]],
+    pub graphemes: &'a [String],
+    pub insertion: u16,
+    pub deletion: u16,
+    pub base: u16,
+    pub transposition: u16,
+}
+
 #[inline]
-pub(crate) fn advance_row(
-    parent: &Row,
-    two_back: Option<&Row>,
-    prev_candidate: Option<u16>,
-    candidate: u16,
-    query_len: usize,
-    query_ids: &[Option<u16>],
-    query_slices: &[&str],
-    specials: &[&[(u16, u16)]],
-    graphemes: &[String],
-    insertion: u16,
-    deletion: u16,
-    base: u16,
-    transposition: u16,
-) -> (Row, u16) {
+pub(crate) fn advance_row(args: RowAdvance<'_>) -> (Row, u16) {
+    let RowAdvance {
+        parent,
+        two_back,
+        prev_candidate,
+        candidate,
+        query_len,
+        query_ids,
+        query_slices,
+        specials,
+        graphemes,
+        insertion,
+        deletion,
+        base,
+        transposition,
+    } = args;
     let mut row = [INF; ROW_LEN];
     row[0] = parent[0].saturating_add(insertion);
     let mut min = row[0];

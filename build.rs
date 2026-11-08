@@ -5,8 +5,6 @@
 //! Roman tries are built from the pattern tables derived from okkhor/riti
 //! rules (see `data/ATTRIBUTION.md`); see `src/typo/roman_gen.rs`.
 
-#![allow(dead_code, clippy::all)]
-
 include!("src/typo/roman_gen.rs");
 
 use std::{
@@ -156,7 +154,8 @@ fn main() {
         forms.sort();
         forms.dedup();
         // build byte trie CSR
-        let mut nodes: Vec<(Vec<(u8, u32)>, Vec<u32>)> = vec![(Vec::new(), Vec::new())];
+        type TrieNode = (Vec<(u8, u32)>, Vec<u32>);
+        let mut nodes: Vec<TrieNode> = vec![(Vec::new(), Vec::new())];
         for (form, wid) in &forms {
             let mut node = 0usize;
             for &b in form.iter() {
