@@ -46,6 +46,3 @@ Data: AI4Bharat IndicCorp V2, distributed by the IndicNLP project.
 cargo run --release --manifest-path generate/Cargo.toml --bin corpus-count -- \
     --corpus /tmp/opencode/bn.txt --out data/frequency.json
 ```
-
-An older Python implementation against Leipzig corpora is retained at
-`generate/build_frequency.py` for reference.

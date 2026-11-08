@@ -9,21 +9,26 @@ suggestions. Phonetic conversion (Avro, Khipro, …) deliberately lives in
 
 ## How it works
 
-The index is one immutable, frequency-bearing FST over Unicode extended
-grapheme clusters. The same FST answers both operations:
+The index is a single build-time grapheme trie (UPDSHIX3 blob) with
+frequency-bearing terminals. The same index answers both operations:
 
 - **Typo correction** — a bounded weighted Damerau/optimal-string-alignment
-  automaton traverses the FST directly. It supports insertion, deletion,
-  substitution, adjacent transposition and Bangla-specific confusions
-  (for example শ/ষ/স, ন/ণ, ই/ঈ, ি/ী).
+  DP over the trie. It supports insertion, deletion, substitution, adjacent
+  transposition, Bangla-specific confusions (for example শ/ষ/স, ন/ণ, ই/ঈ, ি/ী),
+  and a repeated-char discount on doublings (`banngla` ~ `bangla`).
 - **Prefix completion** — a second automaton over the same keys. The final
   query grapheme may be incomplete, so typing `ক` still matches words beginning
   with `কা`.
+- **Dual-input typo matching** — `suggest_input` also scores the original
+  Roman input against per-mode (Avro/Khipro) byte tries, merging both
+  signals with calibrated weights. Suggest needs no input mode at all:
+  Bangla-only typo tolerance is its hot path.
 
 Input is NFC-normalized, and grapheme IDs are stored as big-endian `u16`s so
 edits never split a Bangla consonant from its dependent vowel sign. Ranking uses
-weighted edit cost plus the dictionary frequency prior; an optional Kneser–Ney
-bigram model can add context scoring.
+weighted edit cost plus the dictionary frequency prior; optional Kneser–Ney
+bigram and trigram models can add context scoring, and a lemma/POS table can
+gate morphological suffix rules.
 
 The upstream OpenBangla-Keyboard dictionary is imported as a git submodule at
 `data/openbangla-keyboard`. Only its `data/dictionary.json` is used.
@@ -71,12 +76,15 @@ for candidate in corrector.correct_with_context("বাং", &["আমি"], 10)
 
 `corrector()` returns a process-wide index built once on first use. Building a
 custom index is possible with `Corrector::from_entries`, `with_edit_costs`,
-`with_config` and `with_language_model`.
+`with_config`, `with_language_model` and `with_trigram_language_model`.
 
-> **Frequency data:** corpus counts come from the Leipzig Corpora Collection
-> (CC BY 4.0), see `data/frequency.LICENSE`. Words absent from that corpus keep
+> **Frequency data:** corpus counts come from IndicCorp V2 (CC-0,
+> see `data/frequency.LICENSE`). Words absent from that corpus keep
 > frequency `1`, so rare dictionary entries rank below attested words. Supplying
 > your own frequencies through `WordEntry` is also supported.
+
+For performance numbers, see `examples/percentiles.rs` (p50/p95/p99 against
+the 5–15 µs readiness target).
 
 ## Development
 
