@@ -2,8 +2,10 @@ mod automaton;
 mod dhoni;
 mod distance;
 mod language_model;
+mod lemma;
 mod morphology;
 mod normalize;
+mod trigram;
 mod roman;
 mod trie;
 
@@ -21,7 +23,9 @@ use crate::typo::normalize::{normalize_bengali, normalize_cow};
 use crate::typo::trie::Trie;
 
 pub use language_model::BigramLanguageModel;
+pub use lemma::{LemmaPos, LemmaTable};
 pub use morphology::{Morphology, SuffixRule};
+pub use trigram::TrigramLanguageModel;
 /// One dictionary entry. `frequency` should ideally come from a Bengali text
 /// corpus or usage telemetry, not a made-up uniform count.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -370,6 +374,16 @@ pub struct Correction {
     pub context_probability: Option<f64>,
 }
 
+/// FNV-1a over a byte slice (blob integrity offsets must mirror build.rs).
+fn fnv1a(data: &[u8]) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325u64;
+    for &b in data {
+        hash ^= b as u64;
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
+}
+
 /// Compare two corrections in the order exposed by the public API.
 /// Exact matches are always preferred over autocorrections.
 fn compare_corrections(left: &Correction, right: &Correction) -> Ordering {
@@ -549,6 +563,7 @@ pub struct Corrector {
     config: CorrectionConfig,
     edit_costs: EditCosts,
     language_model: Option<BigramLanguageModel>,
+    trigram_language_model: Option<TrigramLanguageModel>,
 }
 
 /// Build both Roman tries from word list using the patched vendored `dhoni`
@@ -590,7 +605,27 @@ fn build_roman_tries(words: Vec<String>) -> [roman::RomanTrie; 2] {
 /// frequency, context probability).
 type ScoreEntry = (f64, u16, Option<u16>, u64, Option<f64>);
 
+/// Counts/limits for the embedded index (visibility for bench reporting,
+/// candidate counting, memory accounting).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct IndexStats {
+    pub words: usize,
+    pub graphemes: usize,
+    pub max_dict_len: usize,
+    pub max_frequency: u64,
+}
+
 impl Corrector {
+    /// Counts and limits for the embedded index (words, graphemes, lengths).
+    pub fn stats(&self) -> IndexStats {
+        IndexStats {
+            graphemes: self.graphemes.len(),
+            words: self.word_count,
+            max_dict_len: self.max_dict_len,
+            max_frequency: self.max_freq,
+        }
+    }
+
     /// Build an index from words, assigning frequency 1 to every distinct word.
     pub fn from_words<I, S>(words: I) -> Result<Self, BuildError>
     where
@@ -688,6 +723,7 @@ impl Corrector {
             config: CorrectionConfig::default(),
             edit_costs,
             language_model: None,
+            trigram_language_model: None,
         })
     }
 
@@ -798,6 +834,18 @@ impl Corrector {
                 .get(cursor..end)
                 .ok_or(BuildError::InvalidIndex("truncated words"))?
                 .to_vec();
+            cursor = end;
+            if is_v2 {
+                // Trailer checksum (Phase 6 integrity): FNV-1a of everything
+                // before it. Older blobs without a trailer stay readable.
+                if let Some(checksum) = bytes.get(cursor..cursor + 8) {
+                    let expect = u64::from_le_bytes(checksum.try_into().unwrap());
+                    let computed = fnv1a(&bytes[..cursor]);
+                    if expect != computed {
+                        return Err(BuildError::InvalidIndex("blob checksum mismatch"));
+                    }
+                }
+            }
             avro.set_words(words.clone());
             khipro.set_words(words);
             [avro, khipro]
@@ -817,6 +865,7 @@ impl Corrector {
             config: CorrectionConfig::default(),
             edit_costs,
             language_model: None,
+            trigram_language_model: None,
         })
     }
 
@@ -1027,6 +1076,13 @@ impl Corrector {
 
     pub fn with_language_model(mut self, model: BigramLanguageModel) -> Self {
         self.language_model = Some(model);
+        self
+    }
+
+    /// Add the trigram tier (uses the last two context words; falls back to
+    /// the bigram tier for shorter context).
+    pub fn with_trigram_language_model(mut self, model: TrigramLanguageModel) -> Self {
+        self.trigram_language_model = Some(model);
         self
     }
 
@@ -1284,11 +1340,20 @@ impl Corrector {
                 } else {
                     word
                 };
-                let context_probability = match (&self.language_model, previous_word.as_deref()) {
-                    (Some(model), Some(previous)) => {
-                        Some(model.probability_normalized(previous, &word))
-                    }
-                    _ => None,
+                let previous_two: Option<(String, String)> = (context.len() >= 2).then(|| {
+                    (
+                        normalize_cow(context[context.len() - 2].trim()).into_owned(),
+                        normalize_cow(context[context.len() - 1].trim()).into_owned(),
+                    )
+                });
+                let context_probability = match (&self.trigram_language_model, &previous_two) {
+                    (Some(model), Some((p2, p1))) => Some(model.probability(p2, p1, &word)),
+                    _ => match (&self.language_model, previous_word.as_deref()) {
+                        (Some(model), Some(previous)) => {
+                            Some(model.probability_normalized(previous, &word))
+                        }
+                        _ => None,
+                    },
                 };
                 let score = self.score(edit_cost, freq, context_probability);
                 if limit == 1 {

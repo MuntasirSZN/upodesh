@@ -21,6 +21,15 @@ use unicode_segmentation::UnicodeSegmentation;
 
 const MAGIC_V2: &[u8; 8] = b"UPDSHIX2";
 
+fn fnv1a(data: &[u8]) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325u64;
+    for &b in data {
+        hash ^= b as u64;
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
+}
+
 fn normalize(word: &str) -> String {
     word.nfc().collect()
 }
@@ -214,6 +223,9 @@ fn main() {
     }
     blob.extend_from_slice(&(words_blob.len() as u32).to_le_bytes());
     blob.extend_from_slice(&words_blob);
+    // Trailer checksum (Phase 6 integrity): FNV-1a over everything above.
+    let checksum = fnv1a(&blob);
+    blob.extend_from_slice(&checksum.to_le_bytes());
 
     fs::write(&out, &blob).expect("write build-time dictionary index");
 
