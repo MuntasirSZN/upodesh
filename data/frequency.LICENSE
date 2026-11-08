@@ -5,42 +5,47 @@
 
 ## Source
 
-Counts are derived from the following corpora of the **Leipzig Corpora
-Collection** (Universität Leipzig):
+Counts are derived from the **IndicCorp V2** Bengali corpus
+(`bn.txt`, ~15.9 GB, one sentence per line), part of the AI4Bharat
+`ai4bharat/IndicCorpV2` dataset on Hugging Face. Only tokens matching
+dictionary words are kept (99,422 / 159,384 = 62.4%, from 922M tokens).
 
-- `ben_news_2020_300K`
-- `ben_wikipedia_2021_300K`
+Corpus provenance:
 
-Downloads: <https://wortschatz.uni-leipzig.de/en/download/ben>
+- Dataset: `ai4bharat/IndicCorpV2` (Hugging Face)
+- Benchmark paper: Doddapaneni et al. (2023), *Towards Leaving No Indic
+  Language Behind: Building Monolingual Corpora, Benchmark and Models for
+  Indic Languages*, ACL 2023 (arXiv:2112.02972), doi:10.18653/v1/2023.acl-long.693
+- Corpus file sha256:
+  `a5b0ec3df504ebcadf551249c6dc53c9ab17112739aedfa861b52e6b7b2f2d6d`
 
 ## Licence
 
-The Leipzig Corpora Collection text corpora are made available under the
-**Creative Commons Attribution 4.0 International (CC BY 4.0)** licence:
+IndicCorp V2 is made available under the **Creative Commons CC-0**
+assignment of creators' rights (public domain dedication):
 
-<https://creativecommons.org/licenses/by/4.0/>
+<https://creativecommons.org/publicdomain/zero/1.0/>
 
-`data/frequency.json` is a derivative work: token counts from the corpora,
-summed across the two corpora, NFC-normalized, and filtered to words present in
-the OpenBangla-Keyboard dictionary. It is distributed under CC BY 4.0.
-
-The Rust source code of `upodesh` remains MIT-licensed.
+The dataset card states that datasets created as part of this work are
+released under CC-0 and models/code under MIT. The derived counts here
+are CC-0-clean; this attribution exists for citation and provenance.
 
 ## Attribution
 
-> D. Goldhahn, T. Eckart and U. Quasthoff (2012): *Building Large Monolingual
-> Dictionaries at the Leipzig Corpora Collection: From 100 to 200 Languages.*
-> In: Proceedings of the 8th International Language Resources and Evaluation
-> Conference (LREC'12).
+> Doddapaneni, S., Aralikatte, R., Ramesh, G., Goyal, S., Khapra, M. M.,
+> Kunchukuttan, A., et al. (2023): *Towards Leaving No Indic Language
+> Behind: Building Monolingual Corpora, Benchmark and Models for Indic
+> Languages.* Proceedings of the 61st Annual Meeting of the Association
+> for Computational Linguistics (ACL 2023).
 
-Corpus data: Leipzig Corpora Collection, Universität Leipzig.
+Data: AI4Bharat IndicCorp V2, distributed by the IndicNLP project.
 
 ## Regenerating
 
 ```sh
-python3 generate/build_frequency.py
+cargo run --release --manifest-path generate/Cargo.toml --bin corpus-count -- \
+    --corpus /tmp/opencode/bn.txt --out data/frequency.json
 ```
 
-The script downloads the two corpora, extracts their `*-words.txt` files, and
-rewrites `data/frequency.json`. Builds pick the file up automatically through
-`build.rs`.
+An older Python implementation against Leipzig corpora is retained at
+`generate/build_frequency.py` for reference.

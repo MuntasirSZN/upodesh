@@ -30,11 +30,25 @@ The upstream OpenBangla-Keyboard dictionary is imported as a git submodule at
 
 ### Frequency prior
 
-`upodesh` ships `data/frequency.json`, derived from the Leipzig Corpora Collection
-(`ben_news_2020_300K` + `ben_wikipedia_2021_300K`, CC BY 4.0). It covers 40,882
-dictionary words and is loaded at build time. See `data/frequency.LICENSE` for
-provenance and attribution; regenerate it with
-`python3 generate/build_frequency.py`.
+`upodesh` ships `data/frequency.json`, derived from **IndicCorp V2**
+(`ai4bharat/IndicCorpV2`, CC-0). It covers 99,422 / 159,384 dictionary
+words (62.4%) from 922M tokens and is loaded at build time. See
+`data/frequency.LICENSE` for provenance, corpus checksum, and citation;
+regenerate it with the Rust streaming counter:
+
+```sh
+cargo run --release --manifest-path generate/Cargo.toml --bin corpus-count -- \
+    --corpus /path/to/bn.txt --out data/frequency.json
+```
+
+### Offline eval
+
+`cargo run --release --example eval -- data/eval/banglasec-test.csv.gz`
+reports Top-1/Top-5/Recall@5 of the Bangla-side suggester against the
+BanglaSEC test split (MIT, official DPCSpell splits). Current baseline:
+Top-1 18.4%, Top-5 23.2% (177,919 pairs). The synthetic generator
+(`python3 generate/gen_errors.py`) produces a compatible pair set from
+the same CC-0 corpus for calibration runs.
 
 ## Usage
 

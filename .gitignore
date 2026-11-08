@@ -11,6 +11,9 @@ Cargo.lock
 __pycache__/
 *.pyc
 
+# generated offline pair corpora (regenerate with generate/ scripts)
+generate/out/
+
 # MSVC Windows builds of rustc generate these, which store debugging information
 *.pdb
 
