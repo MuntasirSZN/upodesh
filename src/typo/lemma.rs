@@ -57,10 +57,11 @@ pub struct LemmaTable {
 
 impl LemmaTable {
     /// Parse a `{"lemma": "pos", ...}` JSON object as written by
-    /// `generate/extract_lemma.py`.
+    /// `generate/extract_lemma.py`. Returns an empty table on parse failure.
     pub fn from_json(bytes: &[u8]) -> Self {
-        let root: serde_json::Value =
-            serde_json::from_slice(bytes).expect("lemma table is valid JSON");
+        let Ok(root) = serde_json::from_slice::<serde_json::Value>(bytes) else {
+            return Self::default();
+        };
         let mut map = HashMap::new();
         if let Some(obj) = root.as_object() {
             for (word, pos) in obj {

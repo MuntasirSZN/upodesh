@@ -68,9 +68,10 @@ impl TrigramLanguageModel {
                 let word_id = match word_ids.get(&word).copied() {
                     Some(id) => id,
                     None => {
-                        let id = u32::try_from(word_ids.len())
-                            .expect("trigram vocabulary exceeds u32 IDs");
-                        word_ids.insert(word.to_string(), id);
+                        let Ok(id) = u32::try_from(word_ids.len()) else {
+                            continue;
+                        };
+                        word_ids.insert(word, id);
                         id
                     }
                 };

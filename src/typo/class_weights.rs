@@ -23,7 +23,16 @@ impl ClassWeights {
     /// (`{"class_weights": {"delete": 0.2, ...}}`). Missing keys default to 0
     /// (identity multiplier).
     pub fn from_json(bytes: &[u8]) -> Self {
-        let root: Value = serde_json::from_slice(bytes).expect("weights JSON");
+        let Ok(root) = serde_json::from_slice::<Value>(bytes) else {
+            return Self {
+                delete: 0.0,
+                duplicate: 0.0,
+                mispress: 0.0,
+                mispress_insert: 0.0,
+                phonetic: 0.0,
+                transpose: 0.0,
+            };
+        };
         let w = &root["class_weights"];
         let get = |k: &str| w[k].as_f64().unwrap_or(0.0);
         Self {

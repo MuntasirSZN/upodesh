@@ -72,7 +72,9 @@ impl TrieBuilder {
         self.stack.truncate(lcp + 1);
         self.prev_path.truncate(lcp);
         for &id in &path[lcp..] {
-            let parent = *self.stack.last().expect("stack always holds the root");
+            let Some(&parent) = self.stack.last() else {
+                return;
+            };
             let child = self.nodes.len() as u32;
             self.nodes.push(TempNode {
                 head: NONE,
@@ -100,7 +102,9 @@ impl TrieBuilder {
             self.stack.push(child);
             self.prev_path.push(id);
         }
-        let node = *self.stack.last().expect("stack always holds the root");
+        let Some(&node) = self.stack.last() else {
+            return;
+        };
         self.nodes[node as usize].term = self.nodes[node as usize].term.saturating_add(freq);
         self.nodes[node as usize].mx = self.nodes[node as usize].mx.max(freq);
     }

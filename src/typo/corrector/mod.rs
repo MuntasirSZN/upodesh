@@ -259,6 +259,25 @@ impl Corrector {
         }
     }
 
+    /// A minimal empty corrector that cannot fail to construct.
+    pub(crate) fn empty_fallback() -> Self {
+        let trie = Trie::from_sorted_paths(&mut []);
+        Self {
+            trie,
+            roman: [roman::RomanTrie::empty(), roman::RomanTrie::empty()],
+            graphemes: Vec::new(),
+            grapheme_ids: HashMap::new(),
+            specials: Vec::new(),
+            word_count: 0,
+            max_dict_len: 0,
+            max_freq: 0,
+            config: CorrectionConfig::default(),
+            edit_costs: EditCosts::bengali(),
+            language_model: None,
+            trigram_language_model: None,
+        }
+    }
+
     /// Build an index from words, assigning frequency 1 to every distinct word.
     pub fn from_words<I, S>(words: I) -> Result<Self, BuildError>
     where
@@ -329,7 +348,7 @@ impl Corrector {
                 path.push(
                     *grapheme_ids
                         .get(grapheme)
-                        .expect("grapheme table is complete"),
+                        .ok_or(BuildError::InvalidIndex("grapheme table incomplete"))?,
                 );
             }
             max_dict_len = max_dict_len.max(path.len());
@@ -379,7 +398,7 @@ impl Corrector {
                 .ok_or(BuildError::InvalidIndex(reason))?;
             *cursor += 4;
             Ok::<u32, BuildError>(u32::from_le_bytes(
-                chunk.try_into().expect("four bytes checked above"),
+                [chunk[0], chunk[1], chunk[2], chunk[3]],
             ))
         };
 
@@ -455,7 +474,7 @@ impl Corrector {
                     .get(cursor..cursor + 4)
                     .ok_or(BuildError::InvalidIndex("truncated word count"))?;
                 cursor += 4;
-                u32::from_le_bytes(chunk.try_into().expect("4 bytes")) as usize
+                u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]) as usize
             };
             let mut word_off = Vec::with_capacity(word_count);
             for _ in 0..word_count {
@@ -463,7 +482,7 @@ impl Corrector {
                     .get(cursor..cursor + 4)
                     .ok_or(BuildError::InvalidIndex("truncated word offsets"))?;
                 cursor += 4;
-                word_off.push(u32::from_le_bytes(chunk.try_into().expect("4 bytes")));
+                word_off.push(u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
             }
 
             let wl = {
@@ -471,7 +490,7 @@ impl Corrector {
                     .get(cursor..cursor + 4)
                     .ok_or(BuildError::InvalidIndex("truncated words len"))?;
                 cursor += 4;
-                u32::from_le_bytes(chunk.try_into().expect("4 bytes")) as usize
+                u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]) as usize
             };
             let end = cursor
                 .checked_add(wl)
@@ -484,7 +503,11 @@ impl Corrector {
             // Trailer checksum (Phase 6 integrity): FNV-1a of everything
             // before it. Older blobs without a trailer stay readable.
             if let Some(checksum) = bytes.get(cursor..cursor + 8) {
-                let expect = u64::from_le_bytes(checksum.try_into().unwrap());
+                let expect = if let Ok(arr) = checksum.try_into() {
+                    u64::from_le_bytes(arr)
+                } else {
+                    return Err(BuildError::InvalidIndex("bad checksum slice"));
+                };
                 let computed = fnv1a(&bytes[..cursor]);
                 if expect != computed {
                     return Err(BuildError::InvalidIndex("blob checksum mismatch"));

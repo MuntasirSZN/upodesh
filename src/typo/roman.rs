@@ -61,7 +61,11 @@ impl RomanTrie {
                     .get(*cursor..*cursor + 4)
                     .ok_or(super::BuildError::InvalidIndex(reason))?;
                 *cursor += 4;
-                Ok(u32::from_le_bytes(chunk.try_into().expect("4 bytes")))
+                let arr: [u8; 4] = match chunk.try_into() {
+                    Ok(a) => a,
+                    Err(_) => return Err(super::BuildError::InvalidIndex("bad u32 slice")),
+                };
+                Ok(u32::from_le_bytes(arr))
             };
         let read_vec_u32 = |count: usize,
                             cursor: &mut usize,

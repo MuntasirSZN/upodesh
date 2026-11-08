@@ -24,9 +24,18 @@ struct TriNode {
 }
 
 pub(crate) fn load_patterns(bytes: &[u8]) -> PatternSet {
-    let root: serde_json::Value =
-        serde_json::from_slice(bytes).expect("pattern table is valid JSON");
-    let obj = root.as_object().expect("pattern table is an object");
+    let empty = || PatternSet {
+        nodes: vec![TriNode {
+            next: Vec::new(),
+            keys: Vec::new(),
+        }],
+    };
+    let Ok(root) = serde_json::from_slice::<serde_json::Value>(bytes) else {
+        return empty();
+    };
+    let Some(obj) = root.as_object() else {
+        return empty();
+    };
     let mut rev_map: std::collections::HashMap<String, Vec<String>> =
         std::collections::HashMap::new();
     for (roman, block) in obj {
@@ -60,12 +69,16 @@ pub(crate) fn load_patterns(bytes: &[u8]) -> PatternSet {
                         keys: Vec::new(),
                     });
                     let child = (nodes.len() - 1) as u32;
-                    nodes[node].next.push((b, child));
+                    if let Some(n) = nodes.get_mut(node) {
+                        n.next.push((b, child));
+                    }
                     node = child as usize;
                 }
             }
         }
-        nodes[node].keys.extend(keys.iter().cloned());
+        if let Some(n) = nodes.get_mut(node) {
+            n.keys.extend(keys.iter().cloned());
+        }
     }
     PatternSet { nodes }
 }
