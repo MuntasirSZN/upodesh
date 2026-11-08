@@ -14,7 +14,7 @@ nothing from bangla.gov.bd is vendored here. Contact pdeblict@bcc.net.bd /
   covers 99,422 / 159,384 dictionary words (62.4%) from 922M tokens.
   Citation: Doddapaneni et al., *Towards Leaving No Indic Language Behind*,
   ACL 2023.
-- `avro-patterns.json`, `khipro-patterns.json`, `common-patterns.txt` —
+- `avro-patterns.json`, `khipro-patterns.json` —
   generated tables from the OpenBangla organization repositories
   (`upodesh` main/khipro) derived from okkhor/riti rules; internal use only.
 - `khipro-testcases.tsv` — KhiproTeam Khipro layout test corpus, synced with [rank-coder/khipro-m17n](https://github.com/rank-coder/khipro-m17n) (MIT, © 2024 rank_coder) for the `f`, `........` and `,,,,,,,,` rows; provided by the `data/khipro-m17n` git submodule (used as regression vectors only).
