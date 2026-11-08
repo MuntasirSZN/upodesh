@@ -1,8 +1,8 @@
 use unicode_segmentation::UnicodeSegmentation;
 
+use super::WordEntry;
 use super::lemma::{LemmaPos, LemmaTable};
 use super::normalize::normalize_bengali;
-use super::WordEntry;
 
 /// A productive suffix rule for dictionary expansion.
 ///
@@ -110,7 +110,9 @@ impl Morphology {
         for entry in &entries {
             for rule in &self.suffix_rules {
                 if let (Some(required), Some(table)) = (rule.pos, &self.lemma_table)
-                    && table.pos(&entry.word).is_some_and(|actual| actual != required)
+                    && table
+                        .pos(&entry.word)
+                        .is_some_and(|actual| actual != required)
                 {
                     continue;
                 }

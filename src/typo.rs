@@ -1,14 +1,14 @@
-mod class_weights;
 mod automaton;
+mod class_weights;
 mod dhoni;
 mod distance;
 mod language_model;
 mod lemma;
 mod morphology;
 mod normalize;
-mod trigram;
 mod roman;
 mod trie;
+mod trigram;
 
 use std::cmp::{Ordering, Reverse};
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap};

@@ -169,7 +169,10 @@ impl RomanTrie {
         let mut toffset = 0usize;
         for (i, (ch, terms)) in nodes.iter().enumerate() {
             start[i] = offset as u32;
-            assert!(ch.len() <= u8::MAX as usize, "v3 u8 edge-count budget exceeded");
+            assert!(
+                ch.len() <= u8::MAX as usize,
+                "v3 u8 edge-count budget exceeded"
+            );
             cnt[i] = ch.len() as u8;
             for &(b, c) in ch {
                 eid.push(b);
@@ -177,7 +180,10 @@ impl RomanTrie {
             }
             offset += ch.len();
             t_start[i] = toffset as u32;
-            assert!(terms.len() <= u16::MAX as usize, "v3 u16 terminal-count budget exceeded");
+            assert!(
+                terms.len() <= u16::MAX as usize,
+                "v3 u16 terminal-count budget exceeded"
+            );
             t_alloc[i] = terms.len() as u16;
             t_term.extend(terms.iter().copied());
             toffset += terms.len();

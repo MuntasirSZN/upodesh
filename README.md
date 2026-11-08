@@ -53,7 +53,8 @@ reports Top-1/Top-5/Recall@5 of the Bangla-side suggester against the
 BanglaSEC test split (MIT, official DPCSpell splits). Current baseline:
 Top-1 18.4%, Top-5 23.2% (177,919 pairs). The synthetic generator
 (`python3 generate/gen_errors.py`) produces a compatible pair set from
-the same CC-0 corpus for calibration runs.
+the same CC-0 corpus for calibration runs. For latency numbers, see
+`cargo run --release --example percentiles`.
 
 ## Usage
 
